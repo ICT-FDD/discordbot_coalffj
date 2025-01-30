@@ -21,7 +21,9 @@ IMPORTANT_CHANNELS = ["canalprojet1", "canalrendezvous"]
 # Configuration du bot Discord
 intents = discord.Intents.default()
 intents.messages = True
+intents.message_content = True  # Indispensable pour avoir le contenu du message
 intents.guilds = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Dictionnaire pour stocker les messages
