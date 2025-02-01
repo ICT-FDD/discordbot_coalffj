@@ -17,8 +17,8 @@ Bot discord qui résume les nouveau message du serveur Coalition FFJ et les envo
 ├─ data/
 │   ├─ important_channels.txt			(liste des canaux important - messages intégrals)
 │   ├─ excluded_channels.txt			(liste des canaux non surveillés)
-│   └─ daily_summary.txt				(daily report)
-
+│   ├─ daily_summary.txt				(daily report)
+│   └─ weekly_summary.txt				(weekly report)
 
 
 
