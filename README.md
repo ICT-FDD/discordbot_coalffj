@@ -21,6 +21,3 @@ Bot discord qui résume les nouveau message du serveur Coalition FFJ et les envo
 │   └─ weekly_summary.txt				(weekly report)
 
 
-
-
-
