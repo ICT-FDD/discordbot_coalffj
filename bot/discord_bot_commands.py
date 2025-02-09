@@ -1,101 +1,55 @@
+# bot/discord_bot_commands.py
 
+"""
+Description:
+    Déclare les commandes du bot (ex. !send_daily_summary, !add_excluded, etc.).
+    Les fonctions sont branchées sur l'instance 'bot' via decorators @bot.command.
+Uses:
+    - channel_lists pour mettre à jour les listes
+    - mails_management pour envoyer des mails
+    - summarizer pour éventuellement résumer dans une commande
+Args: (Reçoit le bot et les structures de données en paramètres via setup_bot_commands)
+Returns: (Ne retourne rien, les commandes sont enregistrées dans l'objet bot)
+---
+Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
+"""
 
-# --- Commandes Discord ---
+from discord.ext import commands
+from bot.env_config import get_email_address, get_email_password, get_recipient_email
+from bot.channel_lists import save_channels
+from bot.mails_management import send_email, format_messages_for_email
 
-
-@bot.command(name="list_messages")
-async def list_messages(ctx):
+def setup_bot_commands(bot, messages_by_channel):
     """
-    Commande: !list_messages
-    Affiche (dans Discord) la liste de tous les messages collectés, 
-    regroupés par canal.
+    Description:
+        Fonction à appeler depuis core.py pour enregistrer les commandes
+        sur l'instance 'bot'.
+    Uses: bot (discord.ext.commands.Bot)
+    Args: (bot : objet Bot)
+          (messages_by_channel : dict - structure de stockage des messages)
+    Returns: None
+    ---
+    Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
     """
-    if not messages_by_channel["important"] and not messages_by_channel["general"]:
-        await ctx.send("*Aucun message n'a été enregistré pour l'instant.*")
-        return
 
-    result = "**Messages en mémoire**\n\n"
+    @bot.command(name="send_daily_summary")
+    async def send_daily_summary(ctx):
+        """
+        Description:
+            Commande !send_daily_summary : envoie immédiatement un résumé par e-mail.
+        Args: (ctx : Context - contexte d'exécution de la commande)
+        Returns: None
+        ---
+        Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
+        """
+        
+        summary = format_messages_for_email(messages_by_channel)
+        from_addr = get_email_address()
+        password  = get_email_password()
+        to_addr   = get_recipient_email()
 
-    # Canaux importants
-    if messages_by_channel["important"]:
-        result += "__Canaux importants__:\n"
-        for channel, msgs in messages_by_channel["important"].items():
-            result += f"**#{channel}**:\n"
-            for author, content in msgs:
-                result += f"- {author} : {content}\n"
-            result += "\n"
+        send_email(summary, from_addr, password, to_addr)
+        await ctx.send("Résumé envoyé.")
 
-    # Canaux généraux
-    if messages_by_channel["general"]:
-        result += "__Canaux généraux__:\n"
-        for channel, msgs in messages_by_channel["general"].items():
-            result += f"**#{channel}**:\n"
-            for author, content in msgs:
-                result += f"- {author} : {content}\n"
-            result += "\n"
-
-    # Discord limite la longueur d'un message à ~2000 caractères
-    if len(result) > 2000:
-        await ctx.send(result[:1900] + "\n[...] (trop long)")
-    else:
-        await ctx.send(result)
-
-
-
-# ---   CHANNELS MANAGMENT   ---- 
-
-@bot.command(name="add_important")
-async def add_important(ctx, channel_name: str):
-    """
-    Commande: !add_important <nom_de_canal>
-    Ajoute ce canal à la liste "important_channels".
-    """
-    if channel_name in important_channels:
-        await ctx.send(f"Le canal '{channel_name}' est déjà dans la liste des canaux importants.")
-        return
-
-    important_channels.append(channel_name)
-    save_channels(IMPORTANT_CHANNELS_FILE, important_channels)
-    await ctx.send(f"Canal '{channel_name}' ajouté à la liste des canaux importants.")
-
-@bot.command(name="remove_important")
-async def remove_important(ctx, channel_name: str):
-    """
-    Commande: !remove_important <nom_de_canal>
-    Retire ce canal de la liste "important_channels".
-    """
-    if channel_name not in important_channels:
-        await ctx.send(f"Le canal '{channel_name}' n'est pas dans la liste des canaux importants.")
-        return
-
-    important_channels.remove(channel_name)
-    save_channels(IMPORTANT_CHANNELS_FILE, important_channels)
-    await ctx.send(f"Canal '{channel_name}' retiré de la liste des canaux importants.")
-
-@bot.command(name="add_excluded")
-async def add_excluded(ctx, channel_name: str):
-    """
-    Commande: !add_excluded <nom_de_canal>
-    Ajoute ce canal à la liste "excluded_channels".
-    """
-    if channel_name in excluded_channels:
-        await ctx.send(f"Le canal '{channel_name}' est déjà dans la liste des canaux exclus.")
-        return
-
-    excluded_channels.append(channel_name)
-    save_channels(EXCLUDED_CHANNELS_FILE, excluded_channels)
-    await ctx.send(f"Canal '{channel_name}' ajouté à la liste des canaux exclus.")
-
-@bot.command(name="remove_excluded")
-async def remove_excluded(ctx, channel_name: str):
-    """
-    Commande: !remove_excluded <nom_de_canal>
-    Retire ce canal de la liste "excluded_channels".
-    """
-    if channel_name not in excluded_channels:
-        await ctx.send(f"Le canal '{channel_name}' n'est pas dans la liste des canaux exclus.")
-        return
-
-    excluded_channels.remove(channel_name)
-    save_channels(EXCLUDED_CHANNELS_FILE, excluded_channels)
-    await ctx.send(f"Canal '{channel_name}' retiré de la liste des canaux exclus.")
+    # Ajoute d'autres commandes ici...
+    # @bot.command(name="add_excluded"), etc.

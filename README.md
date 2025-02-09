@@ -12,7 +12,13 @@ Bot discord qui résume les nouveau message du serveur Coalition FFJ et les envo
 │	├─ summarizer.py					(fonctionnalités de résumé)
 │	├─ discord_bot_commands.py			(commandes du bot via Discord)
 │	├─ mails_managment.py				(fonctions pour gérer les envois de mails prod/test)
-│	└─ tests_functions.py				(fonctions de tests et controle)
+│
+├─ tests/
+│  ├─ test_env.py						(fonctions de tests et controle)
+│  ├─ test_channel_lists.py
+│  ├─ test_summarizer.py
+│  ├─ test_mails.py
+│  └─ test_bot_integration.py
 │
 ├─ data/
 │   ├─ important_channels.txt			(liste des canaux important - messages intégrals)
