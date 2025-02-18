@@ -12,7 +12,6 @@ import re
 from datetime import datetime, timedelta
 import locale
 
-
 def format_messages_by_day(messages_dict):
     """
     Formate les messages en les regroupant par jour (timestamp), 
@@ -113,8 +112,29 @@ def format_messages_by_day(messages_dict):
 
     return final_text
 
+def get_messages_last_24h(messages_dict):
+    """
+    Retourne un nouveau dictionnaire ne contenant 
+    que les messages postés ces 24 dernières heures.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=24)
 
+    filtered = {
+        "important": {},
+        "general": {}
+    }
 
+    for category in ["important", "general"]:
+        for channel, msg_list in messages_dict[category].items():
+            # Conserver seulement ceux dont le timestamp >= cutoff
+            recent_msgs = []
+            for msg in msg_list:
+                if msg["timestamp"] >= cutoff:
+                    recent_msgs.append(msg)
+            if recent_msgs:
+                filtered[category][channel] = recent_msgs
+
+    return filtered
 
 def get_messages_last_72h(messages_dict):
     """
@@ -141,7 +161,6 @@ def get_messages_last_72h(messages_dict):
     return filtered
 
 
-
 def get_last_n_messages(messages_dict, n=10):
     """
     Retourne un nouveau dictionnaire ne contenant 
@@ -162,7 +181,6 @@ def get_last_n_messages(messages_dict, n=10):
                 filtered[category][channel] = last_msgs
 
     return filtered
-
 
 
 def naive_summarize(text, max_sentences=3, max_length=250):

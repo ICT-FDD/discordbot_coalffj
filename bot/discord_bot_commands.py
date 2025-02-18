@@ -11,7 +11,7 @@ Uses:
 Args: (Reçoit le bot et les structures de données en paramètres via setup_bot_commands)
 Returns: (Ne retourne rien, les commandes sont enregistrées dans l'objet bot)
 ---
-Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
+Author: baudoux.sebastien@gmail.com  | Version: 2.0 | 18/02/2025
 """
 
 import discord
@@ -48,19 +48,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
     print("=== DEBUG: setup_bot_commands() est appelé ===")
     print(f"=== DEBUG: important_channels = {important_channels}, excluded_channels = {excluded_channels} ===")
 
-    """
-    Liste des commandes :
-        - send_daily_summary
-        - test_send_daily_summary
-        - chan_list
-        - ping
-        - add_important
-        - remove_important
-        - add_excluded
-        - remove_excluded
-        - aide
-    """
-
     @bot.command(name="send_daily_summary")
     async def send_daily_summary_cmd(ctx):
         # On récupère uniquement les messages de moins de 24h
@@ -96,7 +83,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
 
         send_email(summary, from_addr, password, to_addr)
         await ctx.send(f"Résumé envoyé à {to_addr}.")
-
 
     @bot.command(name="list_messages")
     async def list_messages_cmd(ctx):
@@ -145,7 +131,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
         else:
             await ctx.send(full_msg)
 
-
     @bot.command(name="preview_mail")
     async def preview_mail_cmd(ctx):
         """
@@ -167,7 +152,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
 
         await ctx.send(f"**Aperçu du mail :**\n{preview}")
 
-
     @bot.command(name="test_recent_10")
     async def test_recent_10_cmd(ctx):
         last_10 = get_last_n_messages(messages_by_channel, n=10)
@@ -178,7 +162,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
         else:
             await ctx.send("Aucun message dans les 10 derniers.")
 
-
     @bot.command(name="test_72h")
     async def test_72h_cmd(ctx):
         recent = get_messages_last_72h(messages_by_channel)
@@ -188,9 +171,7 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
         else:
             await ctx.send("Aucun message ces dernières 72h.")
             
-
-
-    @bot.command(name="ping", help="Vérifie si le bot répond.")
+    @bot.command(name="ping", help="Vérifie si le bot répond.", hidden=True)
     async def ping_command(ctx):
         """
         Commande simple !ping => le bot répond "Pong!"
@@ -286,8 +267,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
         await ctx.send(f"Canal '{channel_name}' retiré de la liste des canaux exclus.")
         await ctx.send(f"Canaux exclus maintenant : {excluded_channels}")
 
-
-
     @bot.command(name="preview_by_day")
     async def preview_by_day_cmd(ctx):
         from bot.mermaid_utils import format_messages_by_day  # ex
@@ -296,7 +275,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
         if len(text) > 1900:
             text = text[:1900] + "\n(...) [Tronqué]"
         await ctx.send(text)
-
 
     @bot.command(name="fetch_72h")
     async def fetch_72h_cmd(ctx):
@@ -350,8 +328,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
             await ctx.send(summary[:1900] + "\n(...) [TROP LONG, tronqué]")
         else:
             await ctx.send(summary if summary else "Aucun message trouvé dans les 72h.")
-
-
 
     @bot.command(name="fetch_recent")
     async def fetch_recent_cmd(ctx, n: int = 10):
@@ -423,9 +399,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
 
         await ctx.send(f"**Aperçu des {n} derniers messages :**\n{preview}")
 
-
-
-
     # -------------------------
     # Liste des commandes du bot
     # -------------------------    
@@ -440,6 +413,8 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
             title="**Liste des commandes disponibles :**\n",
             description="Voici un récapitulatif des commandes disponibles.",
             color=discord.Color.blue()  # Couleur de l'embed
+        embed.set_thumbnail(url="https://exemple.com/img.png")
+        embed.set_footer(text="Tape !aide pour revenir à cette page.")
         )
 
         for cmd in bot.commands:
