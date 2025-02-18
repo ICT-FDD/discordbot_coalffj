@@ -2,7 +2,7 @@
 FROM python:3.9-slim
 
 # Définir le répertoire de travail dans le conteneur
-WORKDIR /app
+WORKDIR /bot
 
 # Copier les fichiers nécessaires dans le conteneur
 COPY . .
@@ -11,4 +11,4 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Définir la commande de démarrage du bot
-CMD ["python", "bot.py"]
+CMD ["python", "core.py"]
