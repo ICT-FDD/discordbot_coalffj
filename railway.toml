@@ -3,4 +3,4 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python bot.py"
+startCommand = "python core.py"
