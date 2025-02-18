@@ -11,4 +11,4 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Définir la commande de démarrage du bot
-CMD ["python", "core.py"]
+CMD ["python", "bot/core.py"]
