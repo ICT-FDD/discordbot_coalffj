@@ -24,12 +24,13 @@ from bot.env_config import (
     get_discord_token,
     get_email_address,
     get_email_password,
-    get_recipient_email
+    get_recipient_email,
+    get_test_recipient_email
 )
 from bot.channel_lists import load_channels
 from bot.discord_bot_commands import setup_bot_commands
-from bot.summarizer import summarize_message  # Si besoin dans on_message
-from bot.mails_management import send_email, format_messages_for_email  # Ex si tu gères l'envoi ici
+# from bot.summarizer import naive_summarize  # Si besoin dans on_message
+# from bot.mails_management import send_email, format_messages_for_email  # Ex si tu gères l'envoi ici
 
 # Fichiers pour la configuration des canaux
 IMPORTANT_CHANNELS_FILE = "data/important_channels.txt"
@@ -38,6 +39,9 @@ EXCLUDED_CHANNELS_FILE = "data/excluded_channels.txt"
 # Chargement des listes de canaux
 important_channels = load_channels(IMPORTANT_CHANNELS_FILE)  # ex: ["canal1", "canal2"]
 excluded_channels = load_channels(EXCLUDED_CHANNELS_FILE)    # ex: ["tests-bot", ...]
+
+#print(f"Canaux importants (fichier) : {important_channels}")
+#print(f"Canaux exclus (fichier) : {excluded_channels}")
 
 # Structure de stockage des messages
 messages_by_channel = {
@@ -60,11 +64,13 @@ def run_bot():
         Initialise et exécute le bot. Charge les commandes, démarre
         éventuellement les tâches planifiées, puis lance la boucle Discord.
     Uses: Les variables / structures déclarées plus haut (bot, important_channels, etc.)
-    Args: Aucun
-    Returns: None
+    Args: Aucun  ||  Returns: None
     ---
     Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
     """
+    
+    print("=== DEBUG: run_bot() appelé ===")
+    
     # Enregistre les commandes définies dans discord_bot_commands.py
     setup_bot_commands(
         bot=bot,
@@ -72,9 +78,7 @@ def run_bot():
         important_channels=important_channels,
         excluded_channels=excluded_channels
     )
-
     # Optionnel : on peut démarrer une tâche planifiée ici, ex: daily_task.start()
-
     # Récupérer le token
     token = get_discord_token()
     # Démarre la boucle d'événements
@@ -89,49 +93,64 @@ async def on_ready():
     Args: Aucun (paramètre imposé par Discord)
     Returns: None
     ---
-    Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
+    Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 10/02/2025
     """
     print(f"[CORE] Bot connecté en tant que {bot.user} (ID: {bot.user.id})")
+    print(f"Canaux importants : {important_channels}")
+    print(f"Canaux exclus : {excluded_channels}")
+
 
 @bot.event
 async def on_message(message):
     """
-    Description:
-        Intercepte chaque message sur le serveur. Classe le message
-        dans 'important' ou 'general' sauf si le canal est exclu.
-        Appelle bot.process_commands() pour laisser passer les commandes.
-    Uses:
-        - important_channels
-        - excluded_channels
-        - messages_by_channel
-    Args: (message : discord.Message - Le message reçu)
-    Returns: None
-    ---
-    Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
+    Gère la réception de chaque message Discord.
+    - Ignore si c'est le bot lui-même
+    - Ignore si le canal est exclu
+    - Classe le message en "important" ou "general"
+    - Stocke l'auteur, le contenu, un timestamp
+    - Laisse passer la commande si c'en est une
     """
-    # Ignorer les messages du bot lui-même pour éviter les boucles
+
+    # 1) Ignorer les messages du bot lui-même
     if message.author == bot.user:
         return
 
     channel_name = message.channel.name
+    print(f"[DEBUG] on_message: '{message.content}' dans #{channel_name}")
 
-    # Si le canal est exclu, on ignore la collecte de messages
+    # 2) Vérifier si le canal est exclu
     if channel_name in excluded_channels:
+        # On ne stocke rien, mais on laisse passer d'éventuelles commandes
         await bot.process_commands(message)
         return
 
-    # Canaux "importants"
+    # 3) Récupérer la date/heure (UTC ou locale)
+    now = datetime.utcnow()  # ou datetime.now()
+
+    # 4) Canaux "importants" => pas de résumé
     if channel_name in important_channels:
+        # Créer la liste si elle n'existe pas encore
         if channel_name not in messages_by_channel["important"]:
             messages_by_channel["important"][channel_name] = []
-        messages_by_channel["important"][channel_name].append((message.author.name, message.content))
+
+        messages_by_channel["important"][channel_name].append({
+            "author": message.author.name,
+            "content": message.content,
+            "timestamp": now
+        })
+
     else:
-        # Autres canaux => stocké dans "general"
+        # 5) Autres canaux => stockés dans "general"
         if channel_name not in messages_by_channel["general"]:
             messages_by_channel["general"][channel_name] = []
-        messages_by_channel["general"][channel_name].append((message.author.name, message.content))
 
-    # Permettre aux commandes (ex: !send_daily_summary) d'être traitées
+        messages_by_channel["general"][channel_name].append({
+            "author": message.author.name,
+            "content": message.content,
+            "timestamp": now
+        })
+
+    # 6) Laisser passer les commandes (ex: !ping, !send_daily_summary, etc.)
     await bot.process_commands(message)
 
 @tasks.loop(hours=24)
@@ -169,6 +188,17 @@ async def before_daily_task():
     """
     print("[CORE] daily_task démarrera une fois que le bot sera prêt...")
     await bot.wait_until_ready()
+
+
+
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

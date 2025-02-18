@@ -55,3 +55,14 @@ def get_recipient_email():
     Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
     """
     return os.getenv("RECIPIENT_EMAIL")
+
+
+def get_test_recipient_email():
+    """
+    Description: Récupère la variable TEST_RECIPIENT_EMAIL.
+    Uses: os.getenv  ||  Args: None
+    Returns: (str : la valeur de TEST_RECIPIENT_EMAIL, ou None si non défini)
+    ---
+    Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
+    """
+    return os.getenv("TEST_RECIPIENT_EMAIL")
