@@ -336,17 +336,104 @@ class DebugCog(commands.Cog):
         else:
             await ctx.send("Aucun message ces dernières 72h.")
 
+
+
+
+import discord
+from discord.ext import commands
+
+class CogSelect(discord.ui.Select):
+    def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
+        """Construit un menu déroulant avec une option par Cog."""
+        self.cogs_with_embeds = cogs_with_embeds
+        
+        options = []
+        for cog_name in cogs_with_embeds.keys():
+            options.append(discord.SelectOption(
+                label=cog_name,
+                description=f"Commandes du cog {cog_name}"
+            ))
+        
+        super().__init__(
+            placeholder="Choisissez un groupe de commandes...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        """Quand l'utilisateur sélectionne un cog dans la liste."""
+        cog_name = self.values[0]  # ex: "EmailCog", "DebugCog", etc.
+        embed = self.cogs_with_embeds[cog_name]
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+class HelpView(discord.ui.View):
+    """Une View qui contient seulement notre menu déroulant de cogs."""
+    def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
+        super().__init__(timeout=60)  # 60s d'inactivité avant que les interractions se désactivent
+        self.add_item(CogSelect(cogs_with_embeds))
+
+@commands.command(name="help2", help="Affiche l'aide avec un menu de sélection pour chaque Cog.")
+async def help2_cmd(ctx):
+    """
+    Cette commande génère un embed vide initial, plus un menu de sélection
+    permettant de naviguer d'un Cog à l'autre.
+    """
+    bot = ctx.bot
+    cogs = bot.cogs  # dict {NomDuCog: instanceDeCog, ...}
+
+    # 1) Construire un dictionnaire de 'NomDuCog' -> 'Embed'
+    cogs_with_embeds = {}
+
+    for cog_name, cog_instance in cogs.items():
+        commands_list = cog_instance.get_commands()
+        
+        embed = discord.Embed(
+            title=f"Aide - {cog_name}",
+            description=f"Commandes du cog {cog_name}",
+            color=discord.Color.blue()
+        )
+        for cmd in commands_list:
+            if cmd.hidden:
+                continue
+            desc = cmd.help if cmd.help else "Pas de description"
+            embed.add_field(name=f"!{cmd.name}", value=desc, inline=False)
+        
+        cogs_with_embeds[cog_name] = embed
+
+    # 2) Créer la View
+    view = HelpView(cogs_with_embeds)
+
+    # 3) Envoyer un "embed initial" + la View
+    #    L'embed initial pourrait être un message d'accueil générique
+    embed_init = discord.Embed(
+        title="Aide interactive",
+        description="Sélectionnez un groupe (Cog) ci-dessous pour voir les commandes.",
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed_init, view=view)
+
+
+
+
+
+
+
+
+
+
+
+
 # -----------------------------------------------------------------
 # Pagination "custom" pour l'aide : on va faire une commande `help2` (par ex.)
 # qui affiche chaque Cog sur une page différente.
 # -----------------------------------------------------------------
+"""
 @commands.command(name="help2", help="Affiche l'aide avec pagination par Cog.")
 async def help2_cmd(ctx):
-    """Commande d'aide paginée (une page par Cog)"""
-
+    #Commande d'aide paginée (une page par Cog)
     bot = ctx.bot
     cogs = bot.cogs  # Dictionnaire { 'NomDuCog': instanceDuCog, ... }
-
     pages = []
     for cog_name, cog_instance in cogs.items():
         # Récupération des commandes du cog
@@ -363,7 +450,6 @@ async def help2_cmd(ctx):
             desc = cmd.help if cmd.help else "Pas de description"
             embed.add_field(name=f"!{cmd.name}", value=desc, inline=False)
         pages.append(embed)
-
     # Petit helper de pagination avec réactions (exemple simplifié)
     index = 0
     message = await ctx.send(embed=pages[index])
@@ -376,7 +462,6 @@ async def help2_cmd(ctx):
             and str(reaction.emoji) in ["⬅️", "➡️"]
             and reaction.message.id == message.id
         )
-
     while True:
         try:
             reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check)
@@ -390,7 +475,7 @@ async def help2_cmd(ctx):
 
             await message.edit(embed=pages[index])
             await message.remove_reaction(reaction.emoji, user)
-
+"""
 # -----------------------------------------------------------------
 # La fonction setup() qui sera appelée depuis core.py pour charger ce fichier
 # NOTE : selon la version de discord.py/py-cord, c'est parfois `async def setup(bot):`
