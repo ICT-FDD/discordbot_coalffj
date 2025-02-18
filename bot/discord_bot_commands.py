@@ -122,7 +122,7 @@ class MessagesCog(commands.Cog):
             await ctx.send(full_msg)
 
     @commands.command(name="preview_by_day", help="Affiche les messages du jour ??")
-    async def preview_by_day_cmd(ctx):
+    async def preview_by_day_cmd(self, ctx):
         from bot.mermaid_utils import format_messages_by_day  # ex
         text = format_messages_by_day(self.messages_by_channel)
         # Tronquer si trop long
