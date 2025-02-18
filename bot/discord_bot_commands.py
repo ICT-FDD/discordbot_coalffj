@@ -426,13 +426,6 @@ def setup_bot_commands(bot, messages_by_channel, important_channels, excluded_ch
 
 
 
-
-
-
-
-
-
-
     # -------------------------
     # Liste des commandes du bot
     # -------------------------    
