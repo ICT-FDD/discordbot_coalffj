@@ -347,7 +347,7 @@ class DebugCog(commands.Cog):
 # Premier menu => choisit le Cog
 # Deuxième menu => affiche les "commandes" disponibles dans ce Cog
 # (ou un menu dynamique créé en callback)
-
+"""
 class CogSelect(discord.ui.Select):
     def __init__(self, all_cogs):
         self.all_cogs = all_cogs
@@ -404,41 +404,9 @@ async def help2_cmd(ctx):
     embed = discord.Embed(title="Choisissez un Cog pour voir ses commandes.")
     await ctx.send(embed=embed, view=view)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 """
+
+
 class CogSelect(discord.ui.Select):
     def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
         #Construit un menu déroulant avec une option par Cog.
@@ -508,7 +476,6 @@ async def help2_cmd(ctx):
     )
     await ctx.send(embed=embed_init, view=view)
 
-"""
 
 # -----------------------------------------------------------------
 # Pagination "custom" pour l'aide : on va faire une commande `help2` (par ex.)
