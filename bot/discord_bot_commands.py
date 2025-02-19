@@ -339,12 +339,109 @@ class DebugCog(commands.Cog):
 
 
 
-import discord
-from discord.ext import commands
+
+
+
+
+
+# Premier menu => choisit le Cog
+# Deuxième menu => affiche les "commandes" disponibles dans ce Cog
+# (ou un menu dynamique créé en callback)
 
 class CogSelect(discord.ui.Select):
+    def __init__(self, all_cogs):
+        self.all_cogs = all_cogs
+        options = [discord.SelectOption(label=cog_name) for cog_name in all_cogs.keys()]
+        super().__init__(placeholder="Choisissez un Cog...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        cog_name = self.values[0]
+        # On récupère la liste des commandes
+        commands_list = self.all_cogs[cog_name].get_commands()
+
+        # On construit un 2e menu, "CommandSelect"
+        view = CommandSelectionView(commands_list)
+        embed = discord.Embed(title=f"Cog {cog_name}", description="Choisissez la commande à exécuter :")
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class CommandSelect(discord.ui.Select):
+    def __init__(self, commands_list):
+        self.commands_list = commands_list
+        options = []
+        for cmd in commands_list:
+            options.append(discord.SelectOption(label=cmd.name, description=cmd.help or ""))
+        super().__init__(placeholder="Choisissez une commande...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen_cmd_name = self.values[0]
+        # Exécuter la commande, ex. via bot.get_command(chosen_cmd_name)
+        command_obj = interaction.client.get_command(chosen_cmd_name)  # client = bot
+        if command_obj:
+            # on "simule" l'appel => on a besoin d'un contexte ou d'un pseudo-contexte
+            # c'est le plus compliqué, car y'a pas de ctx direct en slash
+            # => plus simple : coder la logique en dur ou faire un mini callback
+            await interaction.response.send_message(f"Commande {chosen_cmd_name} déclenchée (WIP).")
+        else:
+            await interaction.response.send_message("Impossible de trouver la commande.")
+
+
+class CommandSelectionView(discord.ui.View):
+    def __init__(self, commands_list):
+        super().__init__()
+        self.add_item(CommandSelect(commands_list))
+
+class HelpView(discord.ui.View):
+    def __init__(self, all_cogs):
+        super().__init__()
+        self.add_item(CogSelect(all_cogs))
+
+@commands.command(name="help2")
+async def help2_cmd(ctx):
+    bot = ctx.bot
+    all_cogs = bot.cogs
+    view = HelpView(all_cogs)
+    embed = discord.Embed(title="Choisissez un Cog pour voir ses commandes.")
+    await ctx.send(embed=embed, view=view)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+class CogSelect(discord.ui.Select):
     def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
-        """Construit un menu déroulant avec une option par Cog."""
+        #Construit un menu déroulant avec une option par Cog.
         self.cogs_with_embeds = cogs_with_embeds
         
         options = []
@@ -362,23 +459,21 @@ class CogSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        """Quand l'utilisateur sélectionne un cog dans la liste."""
+        #Quand l'utilisateur sélectionne un cog dans la liste.
         cog_name = self.values[0]  # ex: "EmailCog", "DebugCog", etc.
         embed = self.cogs_with_embeds[cog_name]
         await interaction.response.edit_message(embed=embed, view=self.view)
 
 class HelpView(discord.ui.View):
-    """Une View qui contient seulement notre menu déroulant de cogs."""
+    #Une View qui contient seulement notre menu déroulant de cogs.
     def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
         super().__init__(timeout=60)  # 60s d'inactivité avant que les interractions se désactivent
         self.add_item(CogSelect(cogs_with_embeds))
 
+
 @commands.command(name="help2", help="Affiche l'aide avec un menu de sélection pour chaque Cog.")
 async def help2_cmd(ctx):
-    """
-    Cette commande génère un embed vide initial, plus un menu de sélection
-    permettant de naviguer d'un Cog à l'autre.
-    """
+    # Cette commande génère un embed vide initial, plus un menu de sélection permettant de naviguer d'un Cog à l'autre.
     bot = ctx.bot
     cogs = bot.cogs  # dict {NomDuCog: instanceDeCog, ...}
 
@@ -413,16 +508,7 @@ async def help2_cmd(ctx):
     )
     await ctx.send(embed=embed_init, view=view)
 
-
-
-
-
-
-
-
-
-
-
+"""
 
 # -----------------------------------------------------------------
 # Pagination "custom" pour l'aide : on va faire une commande `help2` (par ex.)
