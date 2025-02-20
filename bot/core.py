@@ -30,14 +30,17 @@ from bot.channel_lists import load_channels
 # Fichiers pour la configuration des canaux
 IMPORTANT_CHANNELS_FILE = "data/important_channels.txt"
 EXCLUDED_CHANNELS_FILE = "data/excluded_channels.txt"
+
 # Chargement des listes de canaux
 important_channels = load_channels(IMPORTANT_CHANNELS_FILE)  # ex: ["canal1", "canal2"]
 excluded_channels = load_channels(EXCLUDED_CHANNELS_FILE)    # ex: ["tests-bot", ...]
+
 # Structure de stockage des messages
 messages_by_channel = {
     "important": {},
     "general": {}
 }
+
 # Configuration des intents
 intents = discord.Intents.default()
 intents.messages = True
@@ -68,7 +71,6 @@ async def main():
     puis on lance le bot via bot.start(token).
     """
     print("=== DEBUG: main() appelé ===")
-
         # 1) Créer l'instance du bot
     bot = commands.Bot(command_prefix="!", intents=intents)
         # 2) Stocker vos variables sur bot
@@ -83,8 +85,52 @@ async def main():
         print(f"[CORE] Bot connecté en tant que {bot.user} (ID: {bot.user.id})")
         print(f"Canaux importants : {bot.important_channels}")
         print(f"Canaux exclus : {bot.excluded_channels}")
+        
+        # Lance la récupération initiale, 20 messages par canal par ex.
+        await populate_initial_messages(bot, limit=20)
+        print("Messages initiaux récupérés.")
         # On peut démarrer la tâche planifiée ici si on veut
         daily_task.start()
+
+async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
+    """
+    Parcourt chaque text_channel, récupère 'limit' messages récents,
+    et les stocke dans bot.messages_by_channel.
+    """
+    # On suppose que bot.messages_by_channel, bot.important_channels, etc.
+    # sont déjà définis (comme vous le faites dans 'main()').
+    guild = bot.guilds[0]  # si vous n’avez qu’un seul serveur
+    for channel in guild.text_channels:
+        channel_name = channel.name
+        # Ignorer canaux exclus
+        if channel_name in bot.excluded_channels:
+            continue
+        # Déterminer la catégorie
+        if channel_name in bot.important_channels:
+            category = "important"
+        else:
+            category = "general"
+        # Prépare la liste
+        if channel_name not in bot.messages_by_channel[category]:
+            bot.messages_by_channel[category][channel_name] = []
+        collected = []
+        # Récupère les messages
+        try:
+            async for msg in channel.history(limit=limit, oldest_first=False):
+                if msg.author.bot:
+                    continue
+                collected.append({
+                    "author": msg.author.name,
+                    "content": msg.content,
+                    "timestamp": msg.created_at
+                })
+        except discord.Forbidden:
+            print(f"[WARN] Pas les permissions pour lire #{channel_name}")
+            continue
+        # On va remettre 'collected' dans l’ordre chronologique (plus ancien -> plus récent)
+        collected.reverse()
+        bot.messages_by_channel[category][channel_name].extend(collected)
+    print("[INIT] populate_initial_messages terminé")
 
     @bot.event
     async def on_message(message):
@@ -121,7 +167,6 @@ async def main():
         # 4) Charger l'extension
         #    => Cela va appeler async def setup(bot) dans discord_bot_commands.py
     await bot.load_extension("bot.discord_bot_commands")
-
         # 5) Lancer le bot
     token = get_discord_token()
     await bot.start(token)

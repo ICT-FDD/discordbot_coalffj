@@ -17,12 +17,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from bot.summarizer import naive_summarize
 
-
 def format_messages_for_email(messages_dict):
     """
     Construit une chaîne de texte pour l'e-mail, en séparant
     les canaux "importants" (texte brut) et "généraux" (texte résumé).
-    
     Format attendu de messages_dict:
       {
         "important": {
@@ -38,12 +36,9 @@ def format_messages_for_email(messages_dict):
           ...
         }
       }
-    
-    Returns:
-        str: Le corps de l'e-mail (Markdown / texte brut).
+    Returns: str: Le corps de l'e-mail (Markdown / texte brut).
     """
     email_body = " ** Mail de résumé quotidien du Discord de la Coalittion Feminist For Justice.**\n\n"
-
     # --- Canaux importants (non résumés) ---
     if "important" in messages_dict and messages_dict["important"]:
         email_body += "### Canaux importants\n\n"
@@ -57,9 +52,7 @@ def format_messages_for_email(messages_dict):
                 if "timestamp" in msg and isinstance(msg["timestamp"], datetime):
                     date_str = msg["timestamp"].strftime("%Y-%m-%d %H:%M")
                 email_body += f"{date_str} - **{author}** : {content}\n\n"
-
                 #email_body += f"**{author}** a écrit :\n{content}\n\n"
-
     # --- Canaux généraux (résumés) ---
     if "general" in messages_dict and messages_dict["general"]:
         email_body += "### Autres canaux\n\n"
@@ -75,11 +68,8 @@ def format_messages_for_email(messages_dict):
                 if "timestamp" in msg and isinstance(msg["timestamp"], datetime):
                     date_str = msg["timestamp"].strftime("%Y-%m-%d %H:%M")
                 email_body += f"{date_str} - **{author}** : {summary}\n\n"
-
                 #email_body += f"**{author}** a écrit :\n{summary}\n\n"
-
     return email_body
-
 
 def send_email(body, from_addr, password, to_addr):
     """
@@ -94,16 +84,12 @@ def send_email(body, from_addr, password, to_addr):
     ---
     Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
     """
-    
     msg = MIMEMultipart()
     msg["From"] = from_addr
     msg["To"] = to_addr
     msg["Subject"] = "Test mail"
-
     msg.attach(MIMEText(body, "plain"))
-
     #print("DEBUG: Inside send_email, about to call starttls()")
-
     # Connexion SMTP (avec 'with' → appelle __enter__ et __exit__)
     with smtplib.SMTP("ssl0.ovh.net", 587) as server:
         server.starttls()

@@ -21,9 +21,7 @@ from bot.env_config import get_email_address, get_email_password, get_recipient_
 from bot.mails_management import send_email, format_messages_for_email
 from bot.channel_lists import save_channels
 from bot.summarizer import get_messages_last_24h, get_messages_last_72h, get_last_n_messages
-
-# Si vous voulez toujours accéder à messages_by_channel, important_channels, etc.
-# vous pouvez passer ces variables en paramètre au constructeur du Cog.
+from bot.file_utils import save_messages_to_file, reset_messages
 
 # Chemins vers les fichiers .txt
 IMPORTANT_CHANNELS_FILE = "data/important_channels.txt"
@@ -72,9 +70,12 @@ class EmailCog(commands.Cog):
         from_addr = get_email_address()
         password = get_email_password()
         to_addr = get_test_recipient_email()
-
         send_email(summary, from_addr, password, to_addr)
         await ctx.send(f"Résumé envoyé à {to_addr}.")
+        # 4) Sauvegarde "recent_msgs" (les messages <24h) OU tout "self.messages_by_channel"
+        save_messages_to_file(messages_by_channel)
+        # 5) (Optionnel) reset / vider le cache
+        # reset_messages(self.bot)
 
 class MessagesCog(commands.Cog):
     def __init__(self, bot: commands.Bot, messages_by_channel, important_channels, excluded_channels):
@@ -180,30 +181,24 @@ class MessagesCog(commands.Cog):
             "important": {},
             "general": {}
         }
-
         # Parcours tous les canaux textuels du serveur
         for channel in ctx.guild.text_channels:
             channel_name = channel.name
-            
             # Ignorer les canaux exclus
             if channel_name in self.excluded_channels:
                 continue
-            
             # Déterminer la catégorie
             if channel_name in self.important_channels:
                 category = "important"
             else:
                 category = "general"
-            
             collected_msgs = []
-
             # Récupère jusqu'à 'n' messages récents (les plus récents en premier)
             try:
                 async for msg in channel.history(limit=n):
                     # Optionnel : ignorer les messages du bot
                     if msg.author.bot:
                         continue
-                    
                     collected_msgs.append({
                         "author": msg.author.name,
                         "content": msg.content,
@@ -212,28 +207,23 @@ class MessagesCog(commands.Cog):
             except discord.Forbidden:
                 # Si le bot n'a pas les permissions pour lire l'historique
                 continue
-            
             # Si on a trouvé des messages, on les stocke
             if collected_msgs:
                 # Ici, collected_msgs est dans l'ordre "du plus récent au plus ancien"
                 # Si tu veux inverser pour avoir du plus ancien au plus récent, fais:
                 # collected_msgs.reverse()
                 results[category][channel_name] = collected_msgs
-
         # Maintenant, on formate ces messages (ex. pour un aperçu)
         # Suppose que format_messages_for_email(...) est importé de mails_management
         summary = format_messages_for_email(results)
-
         if not summary.strip():
             await ctx.send("Aucun message trouvé.")
             return
-
         # Discord a une limite de 2000 caractères par message
         if len(summary) > 1900:
             preview = summary[:1900] + "\n[...] (tronqué)"
         else:
             preview = summary
-
         await ctx.send(f"**Aperçu des {n} derniers messages :**\n{preview}")
 
 class CanauxCog(commands.Cog):
@@ -336,14 +326,6 @@ class DebugCog(commands.Cog):
         else:
             await ctx.send("Aucun message ces dernières 72h.")
 
-
-
-
-
-
-
-
-
 # Premier menu => choisit le Cog
 # Deuxième menu => affiche les "commandes" disponibles dans ce Cog
 # (ou un menu dynamique créé en callback)
@@ -406,7 +388,6 @@ async def help2_cmd(ctx):
 
 """
 
-
 class CogSelect(discord.ui.Select):
     def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
         #Construit un menu déroulant avec une option par Cog.
@@ -437,7 +418,6 @@ class HelpView(discord.ui.View):
     def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
         super().__init__(timeout=60)  # 60s d'inactivité avant que les interractions se désactivent
         self.add_item(CogSelect(cogs_with_embeds))
-
 
 @commands.command(name="help2", help="Affiche l'aide avec un menu de sélection pour chaque Cog.")
 async def help2_cmd(ctx):
@@ -475,7 +455,6 @@ async def help2_cmd(ctx):
         color=discord.Color.green()
     )
     await ctx.send(embed=embed_init, view=view)
-
 
 # -----------------------------------------------------------------
 # Pagination "custom" pour l'aide : on va faire une commande `help2` (par ex.)
