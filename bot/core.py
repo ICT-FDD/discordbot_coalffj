@@ -40,7 +40,6 @@ messages_by_channel = {
     "important": {},
     "general": {}
 }
-
 # Configuration des intents
 intents = discord.Intents.default()
 intents.messages = True
@@ -114,7 +113,6 @@ async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
 
     print("[INIT] populate_initial_messages terminé")
 
-
 async def main():
     """
     Point d'entrée asynchrone. 
@@ -125,15 +123,12 @@ async def main():
     - lance le bot.
     """
     print("=== DEBUG: main() appelé ===")
-
     global bot  # si on veut réutiliser bot dans daily_task.before_loop
     bot = commands.Bot(command_prefix="!", intents=intents)
-
     # Attachement des variables
     bot.important_channels   = important_channels
     bot.excluded_channels    = excluded_channels
     bot.messages_by_channel  = messages_by_channel
-
     # ----- Events ----- #
     @bot.event
     async def on_ready():
@@ -154,11 +149,9 @@ async def main():
             return
         channel_name = message.channel.name
         print(f"[DEBUG] on_message: '{message.content}' dans #{channel_name}")
-
         if channel_name in bot.excluded_channels:
             await bot.process_commands(message)
             return
-
         now = datetime.utcnow()
         # On détermine la catégorie
         if channel_name in bot.important_channels:
@@ -174,25 +167,20 @@ async def main():
             "content": message.content,
             "timestamp": now
         })
-
         # Laisser passer les commandes
         await bot.process_commands(message)
-
     # ----- Charger l'extension (cogs) ----- #
     try:
         await bot.load_extension("bot.discord_bot_commands")
     except Exception as e:
         print(f"[ERROR] Impossible de charger l'extension: {e}")
-
     # ----- Lancement du bot ----- #
     token = get_discord_token()
-
     try:
         await bot.start(token)
     except Exception as e:
         print(f"[ERROR] Bot crashed : {e}")
         raise
-
 
 if __name__ == "__main__":
     asyncio.run(main())
