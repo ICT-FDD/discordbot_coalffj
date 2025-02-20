@@ -50,71 +50,51 @@ intents.guilds = True
 @tasks.loop(hours=24)
 async def daily_task():
     """
-    Exemple de tâche planifiée qui se déclenche toutes les 24h.
-    À adapter pour envoyer un résumé à heure fixe, etc.
+    Exécuté toutes les 24h (ex. s'il est démarré à 00h, ce sera tous les jours à 00h).
     """
-    now = datetime.now()
-    if now.hour == 23:
-        print("[CORE] daily_task - Il est 23h, on pourrait envoyer un mail ici.")
-        # ex: summary = format_messages_for_email(bot.messages_by_channel)
-        # send_email(summary, ...)
+    now = datetime.utcnow()
+    print(f"[CORE] daily_task - Il est {now} (UTC).")
+
+    # Ex: Envoyer un résumé par email
+    # summary = format_messages_for_email(bot.messages_by_channel)
+    # send_email(summary, ...)
+    # reset / vider messages_by_channel si besoin
 
 @daily_task.before_loop
 async def before_daily_task():
-    # Attend que le bot soit complètement prêt avant de démarrer la loop.
     print("[CORE] daily_task démarrera une fois que le bot sera prêt...")
-    await bot.wait_until_ready()
-
-async def main():
-    """
-    Point d'entrée asynchrone. On y crée le bot, on charge l'extension 'discord_bot_commands',
-    puis on lance le bot via bot.start(token).
-    """
-    print("=== DEBUG: main() appelé ===")
-        # 1) Créer l'instance du bot
-    bot = commands.Bot(command_prefix="!", intents=intents)
-        # 2) Stocker vos variables sur bot
-    bot.important_channels = important_channels
-    bot.excluded_channels = excluded_channels
-    bot.messages_by_channel = messages_by_channel
-        # 3) Déclarer (ou déplacer) vos events ici, OU les laisser tels quels en décorateur
-        #    (on peut les laisser globalement si on fait @bot.event en bas du fichier, c’est aussi ok)
-        #    Mais si on les laisse en global, il faut s'assurer que `bot` est bien défini.
-    @bot.event
-    async def on_ready():
-        print(f"[CORE] Bot connecté en tant que {bot.user} (ID: {bot.user.id})")
-        print(f"Canaux importants : {bot.important_channels}")
-        print(f"Canaux exclus : {bot.excluded_channels}")
-        
-        # Lance la récupération initiale, 20 messages par canal par ex.
-        await populate_initial_messages(bot, limit=20)
-        print("Messages initiaux récupérés.")
-        # On peut démarrer la tâche planifiée ici si on veut
-        daily_task.start()
+    # on attend que bot soit prêt
+    await bot.wait_until_ready()  
+    print("[CORE] daily_task est prêt à démarrer.")
 
 async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
     """
     Parcourt chaque text_channel, récupère 'limit' messages récents,
     et les stocke dans bot.messages_by_channel.
     """
-    # On suppose que bot.messages_by_channel, bot.important_channels, etc.
-    # sont déjà définis (comme vous le faites dans 'main()').
+    # On suppose que bot.messages_by_channel, bot.important_channels, etc. sont déjà définis.
+    if not bot.guilds:
+        print("[WARN] Aucune guild détectée. Le bot est peut-être pas invité ?")
+        return
+
     guild = bot.guilds[0]  # si vous n’avez qu’un seul serveur
     for channel in guild.text_channels:
         channel_name = channel.name
         # Ignorer canaux exclus
         if channel_name in bot.excluded_channels:
             continue
+
         # Déterminer la catégorie
         if channel_name in bot.important_channels:
             category = "important"
         else:
             category = "general"
-        # Prépare la liste
+
+        # Initialiser la liste si inexistante
         if channel_name not in bot.messages_by_channel[category]:
             bot.messages_by_channel[category][channel_name] = []
+
         collected = []
-        # Récupère les messages
         try:
             async for msg in channel.history(limit=limit, oldest_first=False):
                 if msg.author.bot:
@@ -127,10 +107,46 @@ async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
         except discord.Forbidden:
             print(f"[WARN] Pas les permissions pour lire #{channel_name}")
             continue
-        # On va remettre 'collected' dans l’ordre chronologique (plus ancien -> plus récent)
+
+        # On remet collected dans l’ordre chronologique (plus ancien -> plus récent)
         collected.reverse()
         bot.messages_by_channel[category][channel_name].extend(collected)
+
     print("[INIT] populate_initial_messages terminé")
+
+
+async def main():
+    """
+    Point d'entrée asynchrone. 
+    - Crée le bot, 
+    - stocke les variables (important_channels, etc.),
+    - déclare les events (on_ready, on_message),
+    - charge l'extension,
+    - lance le bot.
+    """
+    print("=== DEBUG: main() appelé ===")
+
+    global bot  # si on veut réutiliser bot dans daily_task.before_loop
+    bot = commands.Bot(command_prefix="!", intents=intents)
+
+    # Attachement des variables
+    bot.important_channels   = important_channels
+    bot.excluded_channels    = excluded_channels
+    bot.messages_by_channel  = messages_by_channel
+
+    # ----- Events ----- #
+    @bot.event
+    async def on_ready():
+        print(f"[CORE] Bot connecté en tant que {bot.user} (ID: {bot.user.id})")
+        print(f"Canaux importants : {bot.important_channels}")
+        print(f"Canaux exclus : {bot.excluded_channels}")
+        
+        # Récupération initiale
+        await populate_initial_messages(bot, limit=20)
+        print("Messages initiaux récupérés.")
+
+        # On lance la tâche planifiée (si on le souhaite)
+        daily_task.start()
 
     @bot.event
     async def on_message(message):
@@ -144,33 +160,39 @@ async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
             return
 
         now = datetime.utcnow()
-
+        # On détermine la catégorie
         if channel_name in bot.important_channels:
-            if channel_name not in bot.messages_by_channel["important"]:
-                bot.messages_by_channel["important"][channel_name] = []
-            bot.messages_by_channel["important"][channel_name].append({
-                "author": message.author.name,
-                "content": message.content,
-                "timestamp": now
-            })
+            cat = "important"
         else:
-            if channel_name not in bot.messages_by_channel["general"]:
-                bot.messages_by_channel["general"][channel_name] = []
-            bot.messages_by_channel["general"][channel_name].append({
-                "author": message.author.name,
-                "content": message.content,
-                "timestamp": now
-            })
+            cat = "general"
 
+        if channel_name not in bot.messages_by_channel[cat]:
+            bot.messages_by_channel[cat][channel_name] = []
+
+        bot.messages_by_channel[cat][channel_name].append({
+            "author": message.author.name,
+            "content": message.content,
+            "timestamp": now
+        })
+
+        # Laisser passer les commandes
         await bot.process_commands(message)
 
-        # 4) Charger l'extension
-        #    => Cela va appeler async def setup(bot) dans discord_bot_commands.py
-    await bot.load_extension("bot.discord_bot_commands")
-        # 5) Lancer le bot
+    # ----- Charger l'extension (cogs) ----- #
+    try:
+        await bot.load_extension("bot.discord_bot_commands")
+    except Exception as e:
+        print(f"[ERROR] Impossible de charger l'extension: {e}")
+
+    # ----- Lancement du bot ----- #
     token = get_discord_token()
-    await bot.start(token)
+
+    try:
+        await bot.start(token)
+    except Exception as e:
+        print(f"[ERROR] Bot crashed : {e}")
+        raise
+
 
 if __name__ == "__main__":
-        # 6) On exécute la coroutine main() pour lancer le bot
     asyncio.run(main())
