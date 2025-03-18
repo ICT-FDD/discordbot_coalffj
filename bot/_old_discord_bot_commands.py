@@ -21,9 +21,7 @@ from bot.env_config import get_email_address, get_email_password, get_recipient_
 from bot.mails_management import send_email, format_messages_for_email
 from bot.channel_lists import save_channels
 from bot.summarizer import get_messages_last_24h, get_messages_last_72h, get_last_n_messages
-
-# Si vous voulez toujours accéder à messages_by_channel, important_channels, etc.
-# vous pouvez passer ces variables en paramètre au constructeur du Cog.
+from bot.file_utils import save_messages_to_file, reset_messages
 
 # Chemins vers les fichiers .txt
 IMPORTANT_CHANNELS_FILE = "data/important_channels.txt"
@@ -72,9 +70,12 @@ class EmailCog(commands.Cog):
         from_addr = get_email_address()
         password = get_email_password()
         to_addr = get_test_recipient_email()
-
         send_email(summary, from_addr, password, to_addr)
         await ctx.send(f"Résumé envoyé à {to_addr}.")
+        # 4) Sauvegarde "recent_msgs" (les messages <24h) OU tout "self.messages_by_channel"
+        save_messages_to_file(messages_by_channel)
+        # 5) (Optionnel) reset / vider le cache
+        # reset_messages(self.bot)
 
 class MessagesCog(commands.Cog):
     def __init__(self, bot: commands.Bot, messages_by_channel, important_channels, excluded_channels):
@@ -122,7 +123,7 @@ class MessagesCog(commands.Cog):
             await ctx.send(full_msg)
 
     @commands.command(name="preview_by_day", help="Affiche les messages du jour ??")
-    async def preview_by_day_cmd(ctx):
+    async def preview_by_day_cmd(self, ctx):
         from bot.mermaid_utils import format_messages_by_day  # ex
         text = format_messages_by_day(self.messages_by_channel)
         # Tronquer si trop long
@@ -180,30 +181,24 @@ class MessagesCog(commands.Cog):
             "important": {},
             "general": {}
         }
-
         # Parcours tous les canaux textuels du serveur
         for channel in ctx.guild.text_channels:
             channel_name = channel.name
-            
             # Ignorer les canaux exclus
             if channel_name in self.excluded_channels:
                 continue
-            
             # Déterminer la catégorie
             if channel_name in self.important_channels:
                 category = "important"
             else:
                 category = "general"
-            
             collected_msgs = []
-
             # Récupère jusqu'à 'n' messages récents (les plus récents en premier)
             try:
                 async for msg in channel.history(limit=n):
                     # Optionnel : ignorer les messages du bot
                     if msg.author.bot:
                         continue
-                    
                     collected_msgs.append({
                         "author": msg.author.name,
                         "content": msg.content,
@@ -212,28 +207,23 @@ class MessagesCog(commands.Cog):
             except discord.Forbidden:
                 # Si le bot n'a pas les permissions pour lire l'historique
                 continue
-            
             # Si on a trouvé des messages, on les stocke
             if collected_msgs:
                 # Ici, collected_msgs est dans l'ordre "du plus récent au plus ancien"
                 # Si tu veux inverser pour avoir du plus ancien au plus récent, fais:
                 # collected_msgs.reverse()
                 results[category][channel_name] = collected_msgs
-
         # Maintenant, on formate ces messages (ex. pour un aperçu)
         # Suppose que format_messages_for_email(...) est importé de mails_management
         summary = format_messages_for_email(results)
-
         if not summary.strip():
             await ctx.send("Aucun message trouvé.")
             return
-
         # Discord a une limite de 2000 caractères par message
         if len(summary) > 1900:
             preview = summary[:1900] + "\n[...] (tronqué)"
         else:
             preview = summary
-
         await ctx.send(f"**Aperçu des {n} derniers messages :**\n{preview}")
 
 class CanauxCog(commands.Cog):
@@ -336,17 +326,146 @@ class DebugCog(commands.Cog):
         else:
             await ctx.send("Aucun message ces dernières 72h.")
 
+# Premier menu => choisit le Cog
+# Deuxième menu => affiche les "commandes" disponibles dans ce Cog
+# (ou un menu dynamique créé en callback)
+"""
+class CogSelect(discord.ui.Select):
+    def __init__(self, all_cogs):
+        self.all_cogs = all_cogs
+        options = [discord.SelectOption(label=cog_name) for cog_name in all_cogs.keys()]
+        super().__init__(placeholder="Choisissez un Cog...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        cog_name = self.values[0]
+        # On récupère la liste des commandes
+        commands_list = self.all_cogs[cog_name].get_commands()
+
+        # On construit un 2e menu, "CommandSelect"
+        view = CommandSelectionView(commands_list)
+        embed = discord.Embed(title=f"Cog {cog_name}", description="Choisissez la commande à exécuter :")
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class CommandSelect(discord.ui.Select):
+    def __init__(self, commands_list):
+        self.commands_list = commands_list
+        options = []
+        for cmd in commands_list:
+            options.append(discord.SelectOption(label=cmd.name, description=cmd.help or ""))
+        super().__init__(placeholder="Choisissez une commande...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen_cmd_name = self.values[0]
+        # Exécuter la commande, ex. via bot.get_command(chosen_cmd_name)
+        command_obj = interaction.client.get_command(chosen_cmd_name)  # client = bot
+        if command_obj:
+            # on "simule" l'appel => on a besoin d'un contexte ou d'un pseudo-contexte
+            # c'est le plus compliqué, car y'a pas de ctx direct en slash
+            # => plus simple : coder la logique en dur ou faire un mini callback
+            await interaction.response.send_message(f"Commande {chosen_cmd_name} déclenchée (WIP).")
+        else:
+            await interaction.response.send_message("Impossible de trouver la commande.")
+
+
+class CommandSelectionView(discord.ui.View):
+    def __init__(self, commands_list):
+        super().__init__()
+        self.add_item(CommandSelect(commands_list))
+
+class HelpView(discord.ui.View):
+    def __init__(self, all_cogs):
+        super().__init__()
+        self.add_item(CogSelect(all_cogs))
+
+@commands.command(name="help2")
+async def help2_cmd(ctx):
+    bot = ctx.bot
+    all_cogs = bot.cogs
+    view = HelpView(all_cogs)
+    embed = discord.Embed(title="Choisissez un Cog pour voir ses commandes.")
+    await ctx.send(embed=embed, view=view)
+
+"""
+
+class CogSelect(discord.ui.Select):
+    def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
+        #Construit un menu déroulant avec une option par Cog.
+        self.cogs_with_embeds = cogs_with_embeds
+        
+        options = []
+        for cog_name in cogs_with_embeds.keys():
+            options.append(discord.SelectOption(
+                label=cog_name,
+                description=f"Commandes du cog {cog_name}"
+            ))
+        
+        super().__init__(
+            placeholder="Choisissez un groupe de commandes...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        #Quand l'utilisateur sélectionne un cog dans la liste.
+        cog_name = self.values[0]  # ex: "EmailCog", "DebugCog", etc.
+        embed = self.cogs_with_embeds[cog_name]
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+class HelpView(discord.ui.View):
+    #Une View qui contient seulement notre menu déroulant de cogs.
+    def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
+        super().__init__(timeout=60)  # 60s d'inactivité avant que les interractions se désactivent
+        self.add_item(CogSelect(cogs_with_embeds))
+
+@commands.command(name="help2", help="Affiche l'aide avec un menu de sélection pour chaque Cog.")
+async def help2_cmd(ctx):
+    # Cette commande génère un embed vide initial, plus un menu de sélection permettant de naviguer d'un Cog à l'autre.
+    bot = ctx.bot
+    cogs = bot.cogs  # dict {NomDuCog: instanceDeCog, ...}
+
+    # 1) Construire un dictionnaire de 'NomDuCog' -> 'Embed'
+    cogs_with_embeds = {}
+
+    for cog_name, cog_instance in cogs.items():
+        commands_list = cog_instance.get_commands()
+        
+        embed = discord.Embed(
+            title=f"Aide - {cog_name}",
+            description=f"Commandes du cog {cog_name}",
+            color=discord.Color.blue()
+        )
+        for cmd in commands_list:
+            if cmd.hidden:
+                continue
+            desc = cmd.help if cmd.help else "Pas de description"
+            embed.add_field(name=f"!{cmd.name}", value=desc, inline=False)
+        
+        cogs_with_embeds[cog_name] = embed
+
+    # 2) Créer la View
+    view = HelpView(cogs_with_embeds)
+
+    # 3) Envoyer un "embed initial" + la View
+    #    L'embed initial pourrait être un message d'accueil générique
+    embed_init = discord.Embed(
+        title="Aide interactive",
+        description="Sélectionnez un groupe (Cog) ci-dessous pour voir les commandes.",
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed_init, view=view)
+
 # -----------------------------------------------------------------
 # Pagination "custom" pour l'aide : on va faire une commande `help2` (par ex.)
 # qui affiche chaque Cog sur une page différente.
 # -----------------------------------------------------------------
+"""
 @commands.command(name="help2", help="Affiche l'aide avec pagination par Cog.")
 async def help2_cmd(ctx):
-    """Commande d'aide paginée (une page par Cog)"""
-
+    #Commande d'aide paginée (une page par Cog)
     bot = ctx.bot
     cogs = bot.cogs  # Dictionnaire { 'NomDuCog': instanceDuCog, ... }
-
     pages = []
     for cog_name, cog_instance in cogs.items():
         # Récupération des commandes du cog
@@ -363,7 +482,6 @@ async def help2_cmd(ctx):
             desc = cmd.help if cmd.help else "Pas de description"
             embed.add_field(name=f"!{cmd.name}", value=desc, inline=False)
         pages.append(embed)
-
     # Petit helper de pagination avec réactions (exemple simplifié)
     index = 0
     message = await ctx.send(embed=pages[index])
@@ -376,7 +494,6 @@ async def help2_cmd(ctx):
             and str(reaction.emoji) in ["⬅️", "➡️"]
             and reaction.message.id == message.id
         )
-
     while True:
         try:
             reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check)
@@ -390,7 +507,7 @@ async def help2_cmd(ctx):
 
             await message.edit(embed=pages[index])
             await message.remove_reaction(reaction.emoji, user)
-
+"""
 # -----------------------------------------------------------------
 # La fonction setup() qui sera appelée depuis core.py pour charger ce fichier
 # NOTE : selon la version de discord.py/py-cord, c'est parfois `async def setup(bot):`

@@ -4,7 +4,7 @@ import discord
 import unittest
 from unittest.mock import MagicMock, AsyncMock
 from discord.ext import commands
-from bot.discord_bot_commands import setup_bot_commands
+from bot._old_discord_bot_commands import setup_bot_commands
 
 class TestBotCommands(unittest.TestCase):
     def test_send_daily_summary_command(self):
