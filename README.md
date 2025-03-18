@@ -26,5 +26,3 @@ Bot discord qui résume les nouveau message du serveur Coalition FFJ et les envo
 │   ├─ daily_summary.txt				(daily report)
 │   └─ weekly_summary.txt				(weekly report)
 
-
-https://www.youtube.com/playlist?list=PL2BX4g3QJQpd_N2bSpXJ_DVVLWbIUfwGW&jct=LRcua06XUW_U-7Z0HYmHnw
