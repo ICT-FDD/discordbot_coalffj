@@ -164,9 +164,10 @@ async def main():
 
 
     # On attache nos variables
-    bot.important_channels   = important_channels
-    bot.excluded_channels    = excluded_channels
-    #bot.messages_by_channel  = messages_by_channel
+    # bot.important_channels = important_channels
+    # bot.excluded_channels  = excluded_channels
+    bot.important_channels = [...]
+    bot.excluded_channels  = [...]
 
     # On enregistre manuellement le listener global d'erreur
     # (car on_command_error n'a pas été défini avec @bot.event)
