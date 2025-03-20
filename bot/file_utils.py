@@ -2,6 +2,7 @@
 import os
 import json
 from datetime import datetime
+from discord.ext import commands
 
 def reset_messages(bot: commands.Bot):
     bot.messages_by_channel["important"].clear()
@@ -25,7 +26,7 @@ def save_messages_to_file(messages_dict):
             for msg in msgs:
                 total_msgs += 1
                 all_timestamps.append(msg["timestamp"])
-    
+
     if all_timestamps:
         oldest = min(all_timestamps)
         newest = max(all_timestamps)
@@ -52,5 +53,5 @@ def save_messages_to_file(messages_dict):
         return str(obj)
     with open(full_path, "w", encoding="utf-8") as f:
         json.dump(data_to_save, f, default=custom_serializer, indent=2)
-    
+
     print(f"[SAVE] Fichier {filename} sauvegardé (nb_msgs={total_msgs}).")

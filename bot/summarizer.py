@@ -14,7 +14,7 @@ import locale
 
 def format_messages_by_day(messages_dict):
     """
-    Formate les messages en les regroupant par jour (timestamp), 
+    Formate les messages en les regroupant par jour (timestamp),
     puis par catégorie ("important"/"general"), puis par canal.
     Retourne une chaîne de caractères type :
         Jeudi 5 janvier 2025
@@ -95,7 +95,7 @@ def format_messages_by_day(messages_dict):
 
 def get_messages_last_24h(messages_dict):
     """
-    Retourne un nouveau dictionnaire ne contenant 
+    Retourne un nouveau dictionnaire ne contenant
     que les messages postés ces 24 dernières heures.
     """
     cutoff = datetime.utcnow() - timedelta(hours=24)
