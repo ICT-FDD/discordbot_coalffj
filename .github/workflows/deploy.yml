@@ -12,7 +12,7 @@ jobs:
     - name: Connexion SSH et redéploiement
       uses: appleboy/ssh-action@v1.0.0
       with:
-        host: ton_pi.duckdns.org
+        host: caroupi2.duckdns.org
         username: carouan
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
