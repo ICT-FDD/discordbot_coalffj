@@ -1,0 +1,22 @@
+name: Deploy to Raspberry Pi
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Connexion SSH et redéploiement
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ton_pi.duckdns.org
+        username: carouan
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          cd ~/bots/discord-bot
+          git pull origin main
+          docker compose down
+          docker compose up -d --build
