@@ -13,6 +13,7 @@ Author: baudoux.sebastien@gmail.com  | Version: 3.1 | 2025-03-xx
 """
 
 import logging
+import smtplib
 
 import discord
 from discord.ext import commands
@@ -84,6 +85,25 @@ class EmailCog(commands.Cog):
         password  = get_email_password()
         to_addr   = get_test_recipient_email()
 
+        missing_config = []
+        if not from_addr:
+            missing_config.append("EMAIL_ADDRESS")
+        if not password:
+            missing_config.append("EMAIL_PASSWORD")
+        if not to_addr:
+            missing_config.append("TEST_RECIPIENT_EMAIL")
+
+        if missing_config:
+            missing_list = ", ".join(missing_config)
+            logger.error(
+                "Configuration e-mail incomplète : %s manquant(s).", missing_list
+            )
+            await ctx.send(
+                "Configuration e-mail incomplète : "
+                f"{missing_list} manquant(s)."
+            )
+            return
+
         try:
             await send_email(summary, from_addr, password, to_addr)
         except TimeoutError:
@@ -92,10 +112,26 @@ class EmailCog(commands.Cog):
                 "Échec de l'envoi du mail de test : délai d'attente dépassé."
             )
             return
+        except smtplib.SMTPException:
+            logger.exception(
+                "Échec de l'envoi du mail de test (erreur SMTP)."
+            )
+            await ctx.send(
+                "Échec de l'envoi du mail de test : erreur SMTP (authentification ou envoi)."
+            )
+            return
         except OSError:
             logger.exception("Échec de l'envoi du mail de test (erreur réseau).")
             await ctx.send(
                 "Échec de l'envoi du mail de test : erreur réseau lors de la connexion SMTP."
+            )
+            return
+        except Exception:
+            logger.exception(
+                "Échec de l'envoi du mail de test (erreur inattendue)."
+            )
+            await ctx.send(
+                "Échec de l'envoi du mail de test : erreur inattendue (voir les logs)."
             )
             return
 

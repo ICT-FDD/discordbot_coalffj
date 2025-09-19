@@ -183,3 +183,8 @@ def naive_summarize(text, max_sentences=3, max_length=250):
     if len(sentences) > max_sentences:
         extracted += " (résumé...)"
     return extracted
+
+
+def summarize_message(text, max_sentences=3, max_length=250):
+    """Interface publique conservant l'ancien nom attendu par les tests."""
+    return naive_summarize(text, max_sentences=max_sentences, max_length=max_length)
