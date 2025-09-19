@@ -66,3 +66,30 @@ def get_test_recipient_email():
     Author: baudoux.sebastien@gmail.com  | Version: 1.0 | 09/02/2025
     """
     return os.getenv("TEST_RECIPIENT_EMAIL")
+
+
+def get_email_smtp_host(default: str = "ssl0.ovh.net"):
+    """Récupère l'hôte SMTP (EMAIL_SMTP_HOST)."""
+    return os.getenv("EMAIL_SMTP_HOST", default)
+
+
+def get_email_smtp_port(default: int = 587):
+    """Récupère le port SMTP (EMAIL_SMTP_PORT)."""
+    value = os.getenv("EMAIL_SMTP_PORT")
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def get_email_smtp_timeout(default: float = 30.0):
+    """Récupère le timeout SMTP (EMAIL_SMTP_TIMEOUT)."""
+    value = os.getenv("EMAIL_SMTP_TIMEOUT")
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default

@@ -12,6 +12,8 @@ Description:
 Author: baudoux.sebastien@gmail.com  | Version: 3.1 | 2025-03-xx
 """
 
+import logging
+
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
@@ -41,6 +43,9 @@ EXCLUDED_CHANNELS_FILE  = "data/excluded_channels.txt"
 # ----------------------------------------------------------------------
 # 1) Cog : EmailCog
 # ----------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
+
 class EmailCog(commands.Cog):
     """Commandes liées à l'envoi de mails et au résumé quotidien."""
     def __init__(self, bot: commands.Bot):
@@ -69,7 +74,7 @@ class EmailCog(commands.Cog):
         password  = get_email_password()
         to_addr   = get_recipient_email()
 
-        send_email(summary, from_addr, password, to_addr)
+        await send_email(summary, from_addr, password, to_addr)
         await ctx.send("Résumé envoyé (24h) !")
 
     @commands.command(name="test_send_daily_summary", help="Envoie un résumé par e-mail à l'adresse de test.")
@@ -79,7 +84,21 @@ class EmailCog(commands.Cog):
         password  = get_email_password()
         to_addr   = get_test_recipient_email()
 
-        send_email(summary, from_addr, password, to_addr)
+        try:
+            await send_email(summary, from_addr, password, to_addr)
+        except TimeoutError:
+            logger.exception("Échec de l'envoi du mail de test (timeout).")
+            await ctx.send(
+                "Échec de l'envoi du mail de test : délai d'attente dépassé."
+            )
+            return
+        except OSError:
+            logger.exception("Échec de l'envoi du mail de test (erreur réseau).")
+            await ctx.send(
+                "Échec de l'envoi du mail de test : erreur réseau lors de la connexion SMTP."
+            )
+            return
+
         await ctx.send(f"Résumé envoyé à {to_addr}.")
 
         # Sauvegarde du cache local (self.bot.messages_by_channel)

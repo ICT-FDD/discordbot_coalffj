@@ -10,9 +10,10 @@ Author: Ton Nom
 Version: 1.0 - 02/02/2025
 """
 
+import asyncio
 import unittest
 from unittest.mock import ANY
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from bot.mails_management import send_email
 
 class TestMailsManagement(unittest.TestCase):
@@ -29,10 +30,20 @@ class TestMailsManagement(unittest.TestCase):
         body = "Hello World"
 
         # Action
-        send_email(body, from_addr, password, to_addr)
-        
-        # Vérif que SMTP(...) a été appelé avec "smtp.ovh.com", 587
-        mock_smtp.assert_called_once_with("ssl0.ovh.net", 587)
+        asyncio.run(
+            send_email(
+                body,
+                from_addr,
+                password,
+                to_addr,
+                host="smtp.example.com",
+                port=2525,
+                timeout=12,
+            )
+        )
+
+        # Vérif que SMTP(...) a été appelé avec l'hôte/port donnés et timeout
+        mock_smtp.assert_called_once_with("smtp.example.com", 2525, timeout=12)
 
         # Récupérer l'instance "server" (celui qui subit server.starttls(), etc.)
         mock_server_instance = mock_smtp.return_value.__enter__.return_value
