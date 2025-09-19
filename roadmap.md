@@ -28,7 +28,7 @@ Ce fichier détaille les différentes étapes et fonctionnalités prévues (ou d
 - [x] **Tâche planifiée** (daily_summary) pour envoyer un mail à heure fixe (23h UTC).
 - [x] **Commandes** `!send_daily_summary`, `!preview_mail`, etc.
 
-**Statut** : Terminé ✓  
+**Statut** : Terminé ✓
 **Reste à faire** : ajuster le fuseau horaire si besoin.
 
 ---
@@ -37,7 +37,7 @@ Ce fichier détaille les différentes étapes et fonctionnalités prévues (ou d
 
 - [x] **Listes de canaux** importants/exclus chargées depuis des fichiers `.txt`.
 - [x] **Commandes** `!add_important`, `!remove_important`, `!add_excluded`, `!remove_excluded`.
-- [ ] Vérifier la **persistance** (si le service est relancé, on ne perd pas la config).  
+- [ ] Vérifier la **persistance** (si le service est relancé, on ne perd pas la config).
   - **Option** : prévoir un volume persistant ou une base de données simple.
 
 **Statut** : En cours
