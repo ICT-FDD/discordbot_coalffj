@@ -15,6 +15,7 @@ Author: baudoux.sebastien@gmail.com  | Version: 3.1 | 2025-03-xx
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
+from typing import Union
 
 # Imports internes
 from bot.env_config import (
@@ -227,6 +228,20 @@ class CanauxCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    @staticmethod
+    def _normalize_channel_name(channel: Union[str, discord.abc.GuildChannel]) -> str:
+        """Retourne un nom de canal à partir d'une chaîne ou d'un objet de canal."""
+        if isinstance(channel, str):
+            name = channel.strip()
+        elif hasattr(channel, "name"):
+            name = str(channel.name).strip()
+        else:
+            name = str(channel).strip()
+
+        if name.startswith("#"):
+            name = name[1:]
+        return name
+
     @commands.command(name="affiche", help="Affiche les listes des canaux importants et exclus.")
     async def affiche_cmd(self, ctx, target: str):
         """
@@ -242,7 +257,11 @@ class CanauxCog(commands.Cog):
             await ctx.send("Usage : `!affiche important` ou `!affiche excluded`")
 
     @commands.command(name="add_important", help="Ajoute un canal dans la liste des canaux importants.")
-    async def add_important_cmd(self, ctx, channel_name: str):
+    async def add_important_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
+        channel_name = self._normalize_channel_name(channel)
+        if not channel_name:
+            await ctx.send("Nom de canal invalide.")
+            return
         # Usage: !add_important <nom-de-canal>
         imp_ch = self.bot.important_channels
         if channel_name in imp_ch:
@@ -255,7 +274,11 @@ class CanauxCog(commands.Cog):
         await ctx.send(f"Canaux importants maintenant : {imp_ch}")
 
     @commands.command(name="remove_important", help="Retire un canal de la liste des canaux importants.")
-    async def remove_important_cmd(self, ctx, channel_name: str):
+    async def remove_important_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
+        channel_name = self._normalize_channel_name(channel)
+        if not channel_name:
+            await ctx.send("Nom de canal invalide.")
+            return
         imp_ch = self.bot.important_channels
         if channel_name not in imp_ch:
             await ctx.send(f"Le canal '{channel_name}' n'est pas dans la liste des canaux importants.")
@@ -267,7 +290,11 @@ class CanauxCog(commands.Cog):
         await ctx.send(f"Canaux importants maintenant : {imp_ch}")
 
     @commands.command(name="add_excluded", help="Ajoute un canal à la liste des canaux exclus.")
-    async def add_excluded_cmd(self, ctx, channel_name: str):
+    async def add_excluded_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
+        channel_name = self._normalize_channel_name(channel)
+        if not channel_name:
+            await ctx.send("Nom de canal invalide.")
+            return
         exc_ch = self.bot.excluded_channels
         if channel_name in exc_ch:
             await ctx.send(f"Le canal '{channel_name}' est déjà dans la liste des canaux exclus.")
@@ -279,7 +306,11 @@ class CanauxCog(commands.Cog):
         await ctx.send(f"Canaux exclus maintenant : {exc_ch}")
 
     @commands.command(name="remove_excluded", help="Retire un canal de la liste des canaux exclus.")
-    async def remove_excluded_cmd(self, ctx, channel_name: str):
+    async def remove_excluded_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
+        channel_name = self._normalize_channel_name(channel)
+        if not channel_name:
+            await ctx.send("Nom de canal invalide.")
+            return
         exc_ch = self.bot.excluded_channels
         if channel_name not in exc_ch:
             await ctx.send(f"Le canal '{channel_name}' n'est pas dans la liste des canaux exclus.")
