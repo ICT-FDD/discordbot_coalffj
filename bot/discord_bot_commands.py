@@ -2,72 +2,127 @@
 
 """
 Description:
-    Déclare les commandes du bot (ex. !send_daily_summary, !add_excluded, etc.).
-    Les fonctions sont branchées sur l’instance du bot via @commands.command().
-
-    On y définit plusieurs Cogs (EmailCog, MessagesCog, etc.).
-    Chaque Cog ne reçoit que "bot" en paramètre, et accède aux
-    variables globales (messages_by_channel, etc.) via self.bot.
-
-Author: baudoux.sebastien@gmail.com  | Version: 3.1 | 2025-03-xx
+    Commandes du bot (!preview_mail, !add_important, …) + helpers
+    pour stocker les listes dans des messages du canal #bot-storage.
+Author: baudoux.sebastien@gmail.com  | Version: 3.2 | 2025-09-19
 """
 
-import logging
-import smtplib
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
-from datetime import datetime, timedelta
-from typing import Union
 
 # Imports internes
 from bot.env_config import (
-    get_email_address,
-    get_email_password,
-    get_recipient_email,
-    get_test_recipient_email
+    get_email_address, get_email_password, get_recipient_email, get_test_recipient_email,
+    get_bot_storage_channel_id, get_important_msg_id, get_excluded_msg_id
 )
 from bot.mails_management import send_email, format_messages_for_email
-from bot.channel_lists import save_channels
 from bot.summarizer import (
     get_messages_last_24h,
     get_messages_last_72h,
     get_last_n_messages,
     format_messages_by_day
 )
-from bot.file_utils import save_messages_to_file, reset_messages
+from bot.file_utils import save_messages_to_file
 
-# Chemins vers les fichiers .txt (pour save_channels, etc.)
-IMPORTANT_CHANNELS_FILE = "data/important_channels.txt"
-EXCLUDED_CHANNELS_FILE  = "data/excluded_channels.txt"
+# ============================================================
+# Helpers : stockage des listes dans des messages Discord
+# ============================================================
+STORE_TEMPLATE = {
+    "version": 1,
+    "updated_at": None,
+    "data": []
+}
 
-# ----------------------------------------------------------------------
+def _render_store_payload(payload: dict) -> str:
+    """Rend un contenu lisible (balise + bloc JSON)."""
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return f"[[STORE]]\n```json\n{body}\n```"
+
+def _parse_store_message(content: str) -> dict:
+    """Extrait le JSON depuis le contenu d’un message #bot-storage."""
+    if "```json" in content:
+        try:
+            json_part = content.split("```json", 1)[1].split("```", 1)[0]
+            return json.loads(json_part)
+        except Exception:
+            pass
+    # fallback : tenter de parser tout le contenu comme JSON
+    try:
+        return json.loads(content)
+    except Exception:
+        return dict(STORE_TEMPLATE)
+
+async def ensure_storage_loaded(bot: commands.Bot):
+    """
+    Charge les listes important/excluded depuis #bot-storage et
+    conserve les pointeurs pour la sauvegarde.
+    """
+    storage_channel_id = get_bot_storage_channel_id()
+    imp_msg_id = get_important_msg_id()
+    exc_msg_id = get_excluded_msg_id()
+
+    if not (storage_channel_id and imp_msg_id and exc_msg_id):
+        raise RuntimeError("BOT_STORAGE_CHANNEL_ID / IMPORTANT_MSG_ID / EXCLUDED_MSG_ID manquent dans .env")
+
+    channel = bot.get_channel(storage_channel_id) or await bot.fetch_channel(storage_channel_id)
+    imp_msg = await channel.fetch_message(imp_msg_id)
+    exc_msg = await channel.fetch_message(exc_msg_id)
+
+    imp_payload = _parse_store_message(imp_msg.content or "")
+    exc_payload = _parse_store_message(exc_msg.content or "")
+
+    bot._store = {
+        "channel": channel,
+        "important": {"message": imp_msg, "payload": imp_payload},
+        "excluded":  {"message": exc_msg, "payload": exc_payload},
+    }
+    bot.important_channels = list(imp_payload.get("data", []))
+    bot.excluded_channels  = list(exc_payload.get("data", []))
+
+async def save_list_to_store(bot: commands.Bot, key: str, new_list: list[str]):
+    """
+    Écrit la liste (triée, unique) dans le message #bot-storage.
+    key ∈ {'important','excluded'}.
+    """
+    entry = bot._store[key]
+    payload = dict(entry.get("payload") or STORE_TEMPLATE)
+    payload["data"] = sorted(set(new_list))
+    payload["version"] = int(payload.get("version", 0)) + 1
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    rendered = _render_store_payload(payload)
+    await entry["message"].edit(content=rendered)
+
+    # mise à jour mémoire
+    entry["payload"] = payload
+    if key == "important":
+        bot.important_channels = payload["data"]
+    else:
+        bot.excluded_channels = payload["data"]
+
+# ============================================================
 # 1) Cog : EmailCog
-# ----------------------------------------------------------------------
-logger = logging.getLogger(__name__)
-
-
+# ============================================================
 class EmailCog(commands.Cog):
     """Commandes liées à l'envoi de mails et au résumé quotidien."""
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name="preview_mail", help="Affiche dans Discord un aperçu du rapport qui serait envoyé par e-mail.")
+    @commands.command(name="preview_mail", help="Aperçu du rapport e-mail.")
     async def preview_mail_cmd(self, ctx):
-        # On récupère la structure via self.bot
         mail_summary = format_messages_for_email(self.bot.messages_by_channel)
         if not mail_summary.strip():
             await ctx.send("Le rapport est vide (aucun message).")
             return
-        if len(mail_summary) > 1900:
-            preview = mail_summary[:1900] + "\n[...] (tronqué)"
-        else:
-            preview = mail_summary
-        await ctx.send(f"**Aperçu du mail :**\n{preview}")
+        await ctx.send(mail_summary[:1900] + ("\n[...] (tronqué)" if len(mail_summary) > 1900 else ""))
 
     @commands.command(name="send_daily_summary", help="Envoie un résumé par e-mail (24h).")
     async def send_daily_summary_cmd(self, ctx):
-        # Récupère les messages <24h depuis la structure du bot
         recent_msgs = get_messages_last_24h(self.bot.messages_by_channel)
         summary = format_messages_for_email(recent_msgs)
 
@@ -75,80 +130,29 @@ class EmailCog(commands.Cog):
         password  = get_email_password()
         to_addr   = get_recipient_email()
 
-        await send_email(summary, from_addr, password, to_addr)
+        # fonction sync → pas de 'await'
+        send_email(summary, from_addr, password, to_addr)
         await ctx.send("Résumé envoyé (24h) !")
 
-    @commands.command(name="test_send_daily_summary", help="Envoie un résumé par e-mail à l'adresse de test.")
+    @commands.command(name="test_send_daily_summary", help="Envoie un résumé à l'adresse de test.")
     async def test_send_daily_summary_cmd(self, ctx):
         summary   = format_messages_for_email(self.bot.messages_by_channel)
         from_addr = get_email_address()
         password  = get_email_password()
         to_addr   = get_test_recipient_email()
 
-        missing_config = []
-        if not from_addr:
-            missing_config.append("EMAIL_ADDRESS")
-        if not password:
-            missing_config.append("EMAIL_PASSWORD")
-        if not to_addr:
-            missing_config.append("TEST_RECIPIENT_EMAIL")
-
-        if missing_config:
-            missing_list = ", ".join(missing_config)
-            logger.error(
-                "Configuration e-mail incomplète : %s manquant(s).", missing_list
-            )
-            await ctx.send(
-                "Configuration e-mail incomplète : "
-                f"{missing_list} manquant(s)."
-            )
-            return
-
-        try:
-            await send_email(summary, from_addr, password, to_addr)
-        except TimeoutError:
-            logger.exception("Échec de l'envoi du mail de test (timeout).")
-            await ctx.send(
-                "Échec de l'envoi du mail de test : délai d'attente dépassé."
-            )
-            return
-        except smtplib.SMTPException:
-            logger.exception(
-                "Échec de l'envoi du mail de test (erreur SMTP)."
-            )
-            await ctx.send(
-                "Échec de l'envoi du mail de test : erreur SMTP (authentification ou envoi)."
-            )
-            return
-        except OSError:
-            logger.exception("Échec de l'envoi du mail de test (erreur réseau).")
-            await ctx.send(
-                "Échec de l'envoi du mail de test : erreur réseau lors de la connexion SMTP."
-            )
-            return
-        except Exception:
-            logger.exception(
-                "Échec de l'envoi du mail de test (erreur inattendue)."
-            )
-            await ctx.send(
-                "Échec de l'envoi du mail de test : erreur inattendue (voir les logs)."
-            )
-            return
-
+        send_email(summary, from_addr, password, to_addr)
         await ctx.send(f"Résumé envoyé à {to_addr}.")
-
-        # Sauvegarde du cache local (self.bot.messages_by_channel)
         save_messages_to_file(self.bot.messages_by_channel)
-        # reset_messages(self.bot)  # décommente si nécessaire
 
-# ----------------------------------------------------------------------
+# ============================================================
 # 2) Cog : MessagesCog
-# ----------------------------------------------------------------------
+# ============================================================
 class MessagesCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name="list_messages", help="Affiche tous les messages stockés, regroupés par canal.")
+    @commands.command(name="list_messages", help="Affiche les messages groupés par canal.")
     async def list_messages_cmd(self, ctx):
         messages_by_channel = self.bot.messages_by_channel
 
@@ -158,7 +162,6 @@ class MessagesCog(commands.Cog):
 
         lines = ["**Messages en mémoire**", "", "(date) - [utilisateur]: <message>", ""]
 
-        # Canaux importants
         if messages_by_channel["important"]:
             lines.append("__Canaux importants__ :")
             for channel, msgs in messages_by_channel["important"].items():
@@ -170,7 +173,6 @@ class MessagesCog(commands.Cog):
                     lines.append(f"- ({date}) - [{author}]: {content}")
                 lines.append("")
 
-        # Canaux généraux
         if messages_by_channel["general"]:
             lines.append("__Canaux généraux__ :")
             for channel, msgs in messages_by_channel["general"].items():
@@ -182,30 +184,17 @@ class MessagesCog(commands.Cog):
                     lines.append(f"- ({date}) - [{author}]: {content}")
                 lines.append("")
 
-        # Assemblage et envoi
         full_msg = "\n".join(lines)
-        if len(full_msg) > 1900:
-            await ctx.send(full_msg[:1900] + "\n(...) [TROP LONG, tronqué]")
-        else:
-            await ctx.send(full_msg)
+        await ctx.send(full_msg[:1900] + ("\n(...) [TROP LONG, tronqué]" if len(full_msg) > 1900 else ""))
 
     @commands.command(name="preview_by_day", help="Affiche les messages du jour, groupés par date.")
     async def preview_by_day_cmd(self, ctx):
-        # On appelle format_messages_by_day sur la structure
         text = format_messages_by_day(self.bot.messages_by_channel)
+        await ctx.send(text[:1900] + ("\n(...) [Tronqué]" if len(text) > 1900 else ""))
 
-        if len(text) > 1900:
-            text = text[:1900] + "\n(...) [Tronqué]"
-        await ctx.send(text)
-
-    @commands.command(name="fetch_72h", help="Affiche les messages depuis 72h dans tous les salons (historique).")
+    @commands.command(name="fetch_72h", help="Affiche les messages depuis 72h dans tous les salons.")
     async def fetch_72h_cmd(self, ctx):
-        """
-        Récupère les messages des 72 dernières heures dans tous les salons,
-        puis affiche un résumé dans Discord (ou par mail).
-        """
-        cutoff   = datetime.utcnow() - timedelta(hours=72)
-        results  = {"important": {}, "general": {}}
+        cutoff_results  = {"important": {}, "general": {}}
         excluded = self.bot.excluded_channels
         imp_ch   = self.bot.important_channels
 
@@ -214,29 +203,19 @@ class MessagesCog(commands.Cog):
                 continue
             category = "important" if channel.name in imp_ch else "general"
             collected = []
-            async for msg in channel.history(limit=None, after=cutoff):
-                if msg.author.bot:
-                    continue
-                collected.append({
-                    "author": msg.author.name,
-                    "content": msg.content,
-                    "timestamp": msg.created_at
-                })
-            if collected:
-                results[category][channel.name] = collected
-
-        summary = format_messages_for_email(results)
-        if len(summary) > 1900:
-            await ctx.send(summary[:1900] + "\n(...) [TROP LONG, tronqué]")
+            async for msg in channel.history(limit=None, after=datetime.utcnow().replace(tzinfo=timezone.utc) - (timezone.utc.utcoffset(None) or datetime.utcnow() - datetime.utcnow())):
+                # fallback, mais on utilise de toute façon la commande dédiée ci-dessous
+                break
+        # on garde la commande initiale (simplifiée) :
+        recent  = get_messages_last_72h(self.bot.messages_by_channel)
+        summary = format_messages_for_email(recent)
+        if not summary.strip():
+            await ctx.send("Aucun message ces dernières 72h.")
         else:
-            await ctx.send(summary if summary else "Aucun message trouvé dans les 72h.")
+            await ctx.send(summary[:1900] + ("\n(...) [TROP LONG, tronqué]" if len(summary) > 1900 else ""))
 
-    @commands.command(name="fetch_recent", help="Récupère les 'n' derniers messages dans chaque canal textuel.")
+    @commands.command(name="fetch_recent", help="Récupère les 'n' derniers messages par salon.")
     async def fetch_recent_cmd(self, ctx, n: int = 10):
-        """
-        Usage: !fetch_recent [n]
-        Parcourt chaque salon textuel, récupère n messages récents, et affiche un aperçu.
-        """
         results  = {"important": {}, "general": {}}
         excluded = self.bot.excluded_channels
         imp_ch   = self.bot.important_channels
@@ -257,52 +236,38 @@ class MessagesCog(commands.Cog):
                     })
             except discord.Forbidden:
                 continue
-
             if collected:
-                # On pourrait faire collected.reverse() si on veut du plus ancien au plus récent
                 results[category][channel.name] = collected
 
         summary = format_messages_for_email(results)
         if not summary.strip():
             await ctx.send("Aucun message trouvé.")
             return
+        await ctx.send(f"**Aperçu des {n} derniers messages :**\n" + summary[:1900] + ("\n[...] (tronqué)" if len(summary) > 1900 else ""))
 
-        if len(summary) > 1900:
-            preview = summary[:1900] + "\n[...] (tronqué)"
-        else:
-            preview = summary
-
-        await ctx.send(f"**Aperçu des {n} derniers messages :**\n{preview}")
-
-# ----------------------------------------------------------------------
-# 3) Cog : CanauxCog
-# ----------------------------------------------------------------------
+# ============================================================
+# 3) Cog : CanauxCog (stockage via #bot-storage)
+# ============================================================
 class CanauxCog(commands.Cog):
-    """Commandes pour gérer la liste des canaux importants/exclus."""
+    """Commandes pour gérer la liste des canaux importants/exclus (stockés dans #bot-storage)."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._loaded = False
 
-    @staticmethod
-    def _normalize_channel_name(channel: Union[str, discord.abc.GuildChannel]) -> str:
-        """Retourne un nom de canal à partir d'une chaîne ou d'un objet de canal."""
-        if isinstance(channel, str):
-            name = channel.strip()
-        elif hasattr(channel, "name"):
-            name = str(channel.name).strip()
-        else:
-            name = str(channel).strip()
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self._loaded:
+            return
+        try:
+            await ensure_storage_loaded(self.bot)
+            self._loaded = True
+        except Exception as e:
+            # On ne bloque pas le bot si le chargement échoue ; les commandes pourront le relancer.
+            print("[CanauxCog] ensure_storage_loaded a échoué :", e)
 
-        if name.startswith("#"):
-            name = name[1:]
-        return name
-
-    @commands.command(name="affiche", help="Affiche les listes des canaux importants et exclus.")
+    @commands.command(name="affiche", help="Affiche les listes des canaux importants et exclus (ex: !affiche important).")
     async def affiche_cmd(self, ctx, target: str):
-        """
-        Usage: !affiche important
-               !affiche excluded
-        """
         target = target.lower()
         if target == "important":
             await ctx.send(f"Canaux importants : {self.bot.important_channels}")
@@ -311,77 +276,54 @@ class CanauxCog(commands.Cog):
         else:
             await ctx.send("Usage : `!affiche important` ou `!affiche excluded`")
 
-    @commands.command(name="add_important", help="Ajoute un canal dans la liste des canaux importants.")
-    async def add_important_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
-        channel_name = self._normalize_channel_name(channel)
-        if not channel_name:
-            await ctx.send("Nom de canal invalide.")
+    @commands.command(name="add_important", help="Ajoute un canal (nom) aux canaux importants.")
+    async def add_important_cmd(self, ctx, channel_name: str):
+        await ensure_storage_loaded(self.bot)
+        imp = set(self.bot.important_channels)
+        if channel_name in imp:
+            await ctx.send(f"'{channel_name}' est déjà dans les importants.")
             return
-        # Usage: !add_important <nom-de-canal>
-        imp_ch = self.bot.important_channels
-        if channel_name in imp_ch:
-            await ctx.send(f"Le canal '{channel_name}' est déjà dans la liste des canaux importants.")
+        imp.add(channel_name)
+        await save_list_to_store(self.bot, "important", list(imp))
+        await ctx.send(f"✅ Ajouté à importants : **{channel_name}**\n→ {self.bot.important_channels}")
+
+    @commands.command(name="remove_important", help="Retire un canal (nom) des canaux importants.")
+    async def remove_important_cmd(self, ctx, channel_name: str):
+        await ensure_storage_loaded(self.bot)
+        imp = set(self.bot.important_channels)
+        if channel_name not in imp:
+            await ctx.send(f"'{channel_name}' n'est pas dans les importants.")
             return
+        imp.remove(channel_name)
+        await save_list_to_store(self.bot, "important", list(imp))
+        await ctx.send(f"🗑️ Retiré des importants : **{channel_name}**\n→ {self.bot.important_channels}")
 
-        imp_ch.append(channel_name)
-        save_channels(IMPORTANT_CHANNELS_FILE, imp_ch)
-        await ctx.send(f"Canal '{channel_name}' ajouté à la liste des canaux importants.")
-        await ctx.send(f"Canaux importants maintenant : {imp_ch}")
-
-    @commands.command(name="remove_important", help="Retire un canal de la liste des canaux importants.")
-    async def remove_important_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
-        channel_name = self._normalize_channel_name(channel)
-        if not channel_name:
-            await ctx.send("Nom de canal invalide.")
+    @commands.command(name="add_excluded", help="Ajoute un canal (nom) aux canaux exclus.")
+    async def add_excluded_cmd(self, ctx, channel_name: str):
+        await ensure_storage_loaded(self.bot)
+        exc = set(self.bot.excluded_channels)
+        if channel_name in exc:
+            await ctx.send(f"'{channel_name}' est déjà dans les exclus.")
             return
-        imp_ch = self.bot.important_channels
-        if channel_name not in imp_ch:
-            await ctx.send(f"Le canal '{channel_name}' n'est pas dans la liste des canaux importants.")
+        exc.add(channel_name)
+        await save_list_to_store(self.bot, "excluded", list(exc))
+        await ctx.send(f"✅ Ajouté aux exclus : **{channel_name}**\n→ {self.bot.excluded_channels}")
+
+    @commands.command(name="remove_excluded", help="Retire un canal (nom) des canaux exclus.")
+    async def remove_excluded_cmd(self, ctx, channel_name: str):
+        await ensure_storage_loaded(self.bot)
+        exc = set(self.bot.excluded_channels)
+        if channel_name not in exc:
+            await ctx.send(f"'{channel_name}' n'est pas dans les exclus.")
             return
+        exc.remove(channel_name)
+        await save_list_to_store(self.bot, "excluded", list(exc))
+        await ctx.send(f"🗑️ Retiré des exclus : **{channel_name}**\n→ {self.bot.excluded_channels}")
 
-        imp_ch.remove(channel_name)
-        save_channels(IMPORTANT_CHANNELS_FILE, imp_ch)
-        await ctx.send(f"Canal '{channel_name}' retiré de la liste des canaux importants.")
-        await ctx.send(f"Canaux importants maintenant : {imp_ch}")
-
-    @commands.command(name="add_excluded", help="Ajoute un canal à la liste des canaux exclus.")
-    async def add_excluded_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
-        channel_name = self._normalize_channel_name(channel)
-        if not channel_name:
-            await ctx.send("Nom de canal invalide.")
-            return
-        exc_ch = self.bot.excluded_channels
-        if channel_name in exc_ch:
-            await ctx.send(f"Le canal '{channel_name}' est déjà dans la liste des canaux exclus.")
-            return
-
-        exc_ch.append(channel_name)
-        save_channels(EXCLUDED_CHANNELS_FILE, exc_ch)
-        await ctx.send(f"Canal '{channel_name}' ajouté à la liste des canaux exclus.")
-        await ctx.send(f"Canaux exclus maintenant : {exc_ch}")
-
-    @commands.command(name="remove_excluded", help="Retire un canal de la liste des canaux exclus.")
-    async def remove_excluded_cmd(self, ctx, channel: Union[str, discord.abc.GuildChannel]):
-        channel_name = self._normalize_channel_name(channel)
-        if not channel_name:
-            await ctx.send("Nom de canal invalide.")
-            return
-        exc_ch = self.bot.excluded_channels
-        if channel_name not in exc_ch:
-            await ctx.send(f"Le canal '{channel_name}' n'est pas dans la liste des canaux exclus.")
-            return
-
-        exc_ch.remove(channel_name)
-        save_channels(EXCLUDED_CHANNELS_FILE, exc_ch)
-        await ctx.send(f"Canal '{channel_name}' retiré de la liste des canaux exclus.")
-        await ctx.send(f"Canaux exclus maintenant : {exc_ch}")
-
-# ----------------------------------------------------------------------
-# 4) Cog : DebugCog
-# ----------------------------------------------------------------------
+# ============================================================
+# 4) Cog : Debug & Help
+# ============================================================
 class DebugCog(commands.Cog):
-    """Commandes de test et debug."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -394,10 +336,7 @@ class DebugCog(commands.Cog):
         last_10 = get_last_n_messages(self.bot.messages_by_channel, n=10)
         summary = format_messages_for_email(last_10)
         if summary.strip():
-            if len(summary) > 1900:
-                await ctx.send(summary[:1900] + "...")
-            else:
-                await ctx.send(summary)
+            await ctx.send(summary[:1900] + ("..." if len(summary) > 1900 else ""))
         else:
             await ctx.send("Aucun message dans les 10 derniers.")
 
@@ -406,16 +345,10 @@ class DebugCog(commands.Cog):
         recent  = get_messages_last_72h(self.bot.messages_by_channel)
         summary = format_messages_for_email(recent)
         if summary.strip():
-            if len(summary) > 1900:
-                await ctx.send(summary[:1900] + "...")
-            else:
-                await ctx.send(summary)
+            await ctx.send(summary[:1900] + ("..." if len(summary) > 1900 else ""))
         else:
             await ctx.send("Aucun message ces dernières 72h.")
 
-# ----------------------------------------------------------------------
-# 5) Commande d’aide avancée : help2 (avec menu interactif)
-# ----------------------------------------------------------------------
 class CogSelect(discord.ui.Select):
     def __init__(self, cogs_with_embeds: dict[str, discord.Embed]):
         self.cogs_with_embeds = cogs_with_embeds
@@ -435,13 +368,12 @@ class HelpView(discord.ui.View):
         super().__init__(timeout=60)
         self.add_item(CogSelect(cogs_with_embeds))
 
-@commands.command(name="help2", help="Affiche l'aide avec un menu interactif pour chaque Cog.")
+@commands.command(name="help2", help="Aide avec menu interactif.")
 async def help2_cmd(ctx):
     bot  = ctx.bot
-    cogs = bot.cogs  # dict : { "EmailCog": instanceEmailCog, ... }
+    cogs = bot.cogs
     cogs_with_embeds = {}
 
-    # Construire un embed par cog
     for cog_name, cog_instance in cogs.items():
         commands_list = cog_instance.get_commands()
         embed = discord.Embed(
@@ -464,22 +396,15 @@ async def help2_cmd(ctx):
     )
     await ctx.send(embed=embed_init, view=view)
 
-
-# ----------------------------------------------------------------------
-# 6) Fonction setup() pour charger tous les Cogs
-# ----------------------------------------------------------------------
+# ============================================================
+# 5) setup() — ajoute tous les cogs
+# ============================================================
 async def setup(bot: commands.Bot):
-    """
-    Appelée automatiquement par bot.load_extension("bot.discord_bot_commands").
-    On y ajoute tous les Cogs au bot.
-    """
     await bot.add_cog(EmailCog(bot))
     await bot.add_cog(MessagesCog(bot))
     await bot.add_cog(CanauxCog(bot))
     await bot.add_cog(DebugCog(bot))
-
-    # On ajoute aussi la commande help2
     bot.add_command(help2_cmd)
     print("[SETUP] Cogs chargés avec succès.")
     return bot
-# ---------------------------------------------------------------------
+# Fin de bot/discord_bot_commands.py

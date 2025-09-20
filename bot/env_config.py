@@ -93,3 +93,16 @@ def get_email_smtp_timeout(default: float = 30.0):
         return float(value)
     except ValueError:
         return default
+
+
+def get_bot_storage_channel_id():
+    v = os.getenv("BOT_STORAGE_CHANNEL_ID")
+    return int(v) if v else None
+
+def get_important_msg_id():
+    v = os.getenv("IMPORTANT_MSG_ID")
+    return int(v) if v else None
+
+def get_excluded_msg_id():
+    v = os.getenv("EXCLUDED_MSG_ID")
+    return int(v) if v else None
