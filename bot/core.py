@@ -1,5 +1,4 @@
 # bot/core.py
-
 """
 Description:
     Fichier principal (core) qui initialise le bot Discord,
@@ -7,23 +6,32 @@ Description:
     Les commandes (!xxx) sont gérées via une extension (discord_bot_commands).
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import traceback
 import sys
+import signal
+import contextlib
+from datetime import datetime, timezone, timedelta
+import zoneinfo
 
 import discord
-from discord.ext import commands, tasks
-from datetime import datetime, timezone
+from discord.ext import commands
 
 # ---------------------------------------------------------------------
-# 1) Logging
+# 1) Logging (moins verbeux)
 # ---------------------------------------------------------------------
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,  # mets DEBUG si tu veux plus de détails
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
+# Réduire le bruit de certains loggers
+logging.getLogger("discord.gateway").setLevel(logging.WARNING)
+logging.getLogger("discord.client").setLevel(logging.INFO)
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
 def my_excepthook(exc_type, exc_value, exc_traceback):
     traceback.print_exception(exc_type, exc_value, exc_traceback)
@@ -31,9 +39,21 @@ def my_excepthook(exc_type, exc_value, exc_traceback):
 sys.excepthook = my_excepthook
 
 # ---------------------------------------------------------------------
-# 2) Config & intents
+# 2) Config & imports projet
 # ---------------------------------------------------------------------
 from bot.env_config import get_discord_token
+# ✅ Getters email viennent d'env_config
+from bot.env_config import (
+    get_email_address,
+    get_email_password,
+    get_recipient_email,
+)
+# ✅ Fonctions mail & formatage viennent de mails_management
+from bot.mails_management import (
+    send_email,
+    format_messages_for_email,
+)
+from bot.file_utils import save_messages_to_file
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -42,20 +62,77 @@ intents.guilds = True
 
 bot: commands.Bot | None = None  # affecté dans main()
 
-# ---------------------------------------------------------------------
-# 3) Tâches
-# ---------------------------------------------------------------------
-@tasks.loop(hours=24)
-async def daily_task():
-    now = datetime.now(timezone.utc)
-    print(f"[CORE] daily_task - {now} (UTC)")
+# Événement pour arrêt propre (SIGINT/SIGTERM/Ctrl+C)
+shutdown_event = asyncio.Event()
 
-@daily_task.before_loop
-async def before_daily_task():
-    print("[CORE] daily_task attend que le bot soit prêt…")
-    await bot.wait_until_ready()
-    print("[CORE] daily_task prêt.")
+def _handle_signal():
+    """Déclenché par SIGINT/SIGTERM pour arrêter proprement."""
+    loop = asyncio.get_running_loop()
+    loop.call_soon_threadsafe(shutdown_event.set)
 
+# ---------------------------------------------------------------------
+# 3) Scheduler “propre” (07:00 Europe/Brussels via asyncio.create_task)
+# ---------------------------------------------------------------------
+async def run_daily_07h_europe_brussels(job_coro):
+    """
+    Lance `job_coro` chaque jour à 07:00 Europe/Brussels.
+    `job_coro` est une coroutine SANS argument.
+    """
+    log = logging.getLogger(__name__)
+    tz = zoneinfo.ZoneInfo("Europe/Brussels")
+    await asyncio.sleep(0)  # yield
+
+    while True:
+        now = datetime.now(tz)
+        target = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        if target <= now:
+            target = target + timedelta(days=1)
+
+        sleep_s = (target - now).total_seconds()
+        log.info("[CORE] Prochaine exécution à %s (dans %d s)", target.isoformat(), int(sleep_s))
+
+        try:
+            await asyncio.sleep(sleep_s)
+            await job_coro()
+        except asyncio.CancelledError:
+            log.info("[CORE] Tâche quotidienne annulée — arrêt propre.")
+            raise
+        except Exception:
+            log.exception("[CORE] Erreur dans la tâche quotidienne — on continue.")
+
+async def do_daily_summary_job():
+    """
+    Construit le résumé et envoie l'e-mail quotidien.
+    Utilise bot.messages_by_channel, déjà alimenté ailleurs.
+    """
+    assert bot is not None
+    log = logging.getLogger(__name__)
+
+    # 1) Construire le résumé (tout le buffer courant)
+    messages_dict = getattr(bot, "messages_by_channel", {})
+    summary = format_messages_for_email(messages_dict)
+
+    # 2) Paramètres e-mail
+    from_addr = get_email_address()
+    password  = get_email_password()
+    to_addr   = get_recipient_email()
+
+    # 3) Envoi
+    try:
+        await send_email(summary, from_addr, password, to_addr)
+        log.info("[MAIL] Résumé envoyé à %s.", to_addr)
+    except Exception:
+        log.exception("[MAIL] Échec de l'envoi du résumé (SMTP).")
+
+    # 4) Sauvegarde locale (log JSON)
+    try:
+        save_messages_to_file(messages_dict)
+    except Exception:
+        log.exception("[SAVE] Échec de la sauvegarde du JSON.")
+
+# ---------------------------------------------------------------------
+# 4) Utilitaires
+# ---------------------------------------------------------------------
 async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
     """
     Récupère `limit` messages récents dans chaque salon texte et
@@ -99,7 +176,7 @@ async def populate_initial_messages(bot: commands.Bot, limit: int = 20):
     print("[INIT] populate_initial_messages terminé")
 
 # ---------------------------------------------------------------------
-# 4) Entrée principale
+# 5) Point d'entrée principal
 # ---------------------------------------------------------------------
 async def main():
     global bot
@@ -113,11 +190,23 @@ async def main():
     bot.important_channels = []
     bot.excluded_channels = []
 
+    # Installer les handlers de signaux (Ctrl+C / kill)
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _handle_signal)
+        except NotImplementedError:
+            # Windows / environnements où add_signal_handler n'est pas dispo
+            pass
+
     # Listener global d'erreurs de commandes
     @commands.Cog.listener()
     async def on_command_error(ctx, error):
         traceback.print_exc()
-        await ctx.send(f"Une erreur est survenue : {error}")
+        try:
+            await ctx.send(f"Une erreur est survenue : {error}")
+        except Exception:
+            pass
 
     bot.add_listener(on_command_error)
 
@@ -140,8 +229,12 @@ async def main():
         await populate_initial_messages(bot, limit=20)
         print("[CORE] Messages initiaux récupérés.")
 
-        # 3) Tâche planifiée
-        daily_task.start()
+        # 3) Tâche planifiée (create_task → Task annulable/awaitable)
+        if not hasattr(bot, "daily_task"):
+            bot.daily_task = asyncio.create_task(
+                run_daily_07h_europe_brussels(do_daily_summary_job)
+            )
+            logging.getLogger(__name__).info("[CORE] daily_task prête.")
 
     @bot.event
     async def on_message(message: discord.Message):
@@ -149,8 +242,6 @@ async def main():
             return
 
         channel_name = message.channel.name
-        print(f"[DEBUG] on_message: '{message.content}' dans #{channel_name}")
-
         excluded = getattr(bot, "excluded_channels", [])
         important = getattr(bot, "important_channels", [])
 
@@ -178,14 +269,40 @@ async def main():
         print(f"[ERROR] Impossible de charger l'extension: {e}")
         traceback.print_exc()
 
-    # Lancement
+    # Lancement + arrêt propre
     token = get_discord_token()
     try:
-        await bot.start(token)
-    except Exception as e:
-        print(f"[ERROR] Bot crashed : {e}")
-        raise
+        # Démarre le bot en tâche concurrente
+        start_task = asyncio.create_task(bot.start(token))
+        # Attends soit un signal d'arrêt, soit un crash du bot
+        await asyncio.wait(
+            {start_task, asyncio.create_task(shutdown_event.wait())},
+            return_when=asyncio.FIRST_COMPLETED
+        )
+    except KeyboardInterrupt:
+        # Ctrl+C classique
+        pass
+    finally:
+        # Annuler proprement la tâche quotidienne si présente
+        task = getattr(bot, "daily_task", None)
+        if task:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
+        # Fermer le bot Discord
+        with contextlib.suppress(Exception):
+            await bot.close()
+
+# ---------------------------------------------------------------------
+# 6) Exécution
+# ---------------------------------------------------------------------
 if __name__ == "__main__":
-    asyncio.run(main())
-# Fin de bot/core.py
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Arrêt demandé (Ctrl+C) — fermeture propre.")
+    except Exception as e:
+        print(f"[FATAL] Exception non gérée dans main(): {e}")
+        traceback.print_exc()
+# EOF

@@ -1,5 +1,4 @@
 # bot/discord_bot_commands.py
-
 """
 Description:
     Commandes du bot (!preview_mail, !add_important, …) + helpers
@@ -17,20 +16,24 @@ from discord.ext import commands
 
 # Imports internes
 from bot.env_config import (
-    get_email_address, get_email_password, get_recipient_email, get_test_recipient_email,
-    get_bot_storage_channel_id, get_important_msg_id, get_excluded_msg_id
+    get_email_address,
+    get_email_password,
+    get_recipient_email,
+    get_test_recipient_email,
+    get_bot_storage_channel_id,
 )
 from bot.mails_management import send_email, format_messages_for_email
 from bot.summarizer import (
     get_messages_last_24h,
     get_messages_last_72h,
     get_last_n_messages,
-    format_messages_by_day
+    format_messages_by_day,
 )
 from bot.file_utils import save_messages_to_file
 
 # ============================================================
 # Helpers : stockage des listes dans des messages Discord
+# (version auto-bootstrapping : pas besoin d'IDs dans .env)
 # ============================================================
 STORE_TEMPLATE = {
     "version": 1,
@@ -38,56 +41,69 @@ STORE_TEMPLATE = {
     "data": []
 }
 
-def _render_store_payload(payload: dict) -> str:
-    """Rend un contenu lisible (balise + bloc JSON)."""
+TAG_IMPORTANT = "[[STORE:important_channels]]"
+TAG_EXCLUDED  = "[[STORE:excluded_channels]]"
+
+def _render_store_payload(tag: str, payload: dict) -> str:
     body = json.dumps(payload, ensure_ascii=False, indent=2)
-    return f"[[STORE]]\n```json\n{body}\n```"
+    return f"{tag}\n```json\n{body}\n```"
 
 def _parse_store_message(content: str) -> dict:
-    """Extrait le JSON depuis le contenu d’un message #bot-storage."""
-    if "```json" in content:
-        try:
+    try:
+        if "```json" in content:
             json_part = content.split("```json", 1)[1].split("```", 1)[0]
             return json.loads(json_part)
-        except Exception:
-            pass
-    # fallback : tenter de parser tout le contenu comme JSON
-    try:
-        return json.loads(content)
+        return json.loads(content)  # tolérant
     except Exception:
         return dict(STORE_TEMPLATE)
 
+async def _find_store_message(channel: discord.TextChannel, tag: str, bot_user_id: int):
+    """Cherche un message contenant 'tag' ET écrit par le bot."""
+    async for msg in channel.history(limit=100):
+        if msg.author.id == bot_user_id and tag in (msg.content or ""):
+            return msg
+    return None
+
+async def _ensure_message(channel: discord.TextChannel, tag: str, bot_user_id: int):
+    """Retourne (message, payload). Crée si absent ou non éditable."""
+    msg = await _find_store_message(channel, tag, bot_user_id)
+    if msg is None:
+        payload = dict(STORE_TEMPLATE)
+        rendered = _render_store_payload(tag, payload)
+        msg = await channel.send(rendered)
+        return msg, payload
+
+    payload = _parse_store_message(msg.content or "")
+    return msg, payload
+
 async def ensure_storage_loaded(bot: commands.Bot):
     """
-    Charge les listes important/excluded depuis #bot-storage et
-    conserve les pointeurs pour la sauvegarde.
+    Charge/initialise les deux messages de stockage dans #bot-storage.
+    - Si aucun message 'propre' appartenant au bot: on les crée.
+    - Remplit bot.important_channels / bot.excluded_channels et bot._store.
     """
     storage_channel_id = get_bot_storage_channel_id()
-    imp_msg_id = get_important_msg_id()
-    exc_msg_id = get_excluded_msg_id()
-
-    if not (storage_channel_id and imp_msg_id and exc_msg_id):
-        raise RuntimeError("BOT_STORAGE_CHANNEL_ID / IMPORTANT_MSG_ID / EXCLUDED_MSG_ID manquent dans .env")
+    if not storage_channel_id:
+        raise RuntimeError("BOT_STORAGE_CHANNEL_ID manquant dans .env")
 
     channel = bot.get_channel(storage_channel_id) or await bot.fetch_channel(storage_channel_id)
-    imp_msg = await channel.fetch_message(imp_msg_id)
-    exc_msg = await channel.fetch_message(exc_msg_id)
+    bot_user_id = bot.user.id
 
-    imp_payload = _parse_store_message(imp_msg.content or "")
-    exc_payload = _parse_store_message(exc_msg.content or "")
+    imp_msg, imp_payload = await _ensure_message(channel, TAG_IMPORTANT, bot_user_id)
+    exc_msg, exc_payload = await _ensure_message(channel, TAG_EXCLUDED,  bot_user_id)
 
     bot._store = {
         "channel": channel,
-        "important": {"message": imp_msg, "payload": imp_payload},
-        "excluded":  {"message": exc_msg, "payload": exc_payload},
+        "important": {"message": imp_msg, "payload": imp_payload, "tag": TAG_IMPORTANT},
+        "excluded":  {"message": exc_msg, "payload": exc_payload, "tag": TAG_EXCLUDED},
     }
     bot.important_channels = list(imp_payload.get("data", []))
     bot.excluded_channels  = list(exc_payload.get("data", []))
 
 async def save_list_to_store(bot: commands.Bot, key: str, new_list: list[str]):
     """
-    Écrit la liste (triée, unique) dans le message #bot-storage.
-    key ∈ {'important','excluded'}.
+    Écrit la liste (triée, unique) dans le message #bot-storage du bot.
+    key ∈ {'important', 'excluded'}.
     """
     entry = bot._store[key]
     payload = dict(entry.get("payload") or STORE_TEMPLATE)
@@ -95,15 +111,16 @@ async def save_list_to_store(bot: commands.Bot, key: str, new_list: list[str]):
     payload["version"] = int(payload.get("version", 0)) + 1
     payload["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    rendered = _render_store_payload(payload)
+    rendered = _render_store_payload(entry["tag"], payload)
     await entry["message"].edit(content=rendered)
 
-    # mise à jour mémoire
+    # maj mémoire
     entry["payload"] = payload
     if key == "important":
         bot.important_channels = payload["data"]
     else:
         bot.excluded_channels = payload["data"]
+
 
 # ============================================================
 # 1) Cog : EmailCog
@@ -127,23 +144,29 @@ class EmailCog(commands.Cog):
         summary = format_messages_for_email(recent_msgs)
 
         from_addr = get_email_address()
-        password  = get_email_password()
-        to_addr   = get_recipient_email()
+        password = get_email_password()
+        to_addr = get_recipient_email()
 
-        # fonction sync → pas de 'await'
-        send_email(summary, from_addr, password, to_addr)
-        await ctx.send("Résumé envoyé (24h) !")
+        try:
+            await send_email(summary, from_addr, password, to_addr)
+            await ctx.send("✅ Résumé envoyé (24h) !")
+        except Exception as e:
+            await ctx.send(f"❌ Échec de l’envoi : {e!s}")
 
-    @commands.command(name="test_send_daily_summary", help="Envoie un résumé à l'adresse de test.")
+    @commands.command(name="test_send_daily_summary", help="Envoie un résumé par e-mail (test immédiat).")
     async def test_send_daily_summary_cmd(self, ctx):
-        summary   = format_messages_for_email(self.bot.messages_by_channel)
+        summary = format_messages_for_email(self.bot.messages_by_channel)
         from_addr = get_email_address()
-        password  = get_email_password()
-        to_addr   = get_test_recipient_email()
+        password = get_email_password()
+        to_addr = get_test_recipient_email()
 
-        send_email(summary, from_addr, password, to_addr)
-        await ctx.send(f"Résumé envoyé à {to_addr}.")
-        save_messages_to_file(self.bot.messages_by_channel)
+        try:
+            await send_email(summary, from_addr, password, to_addr)
+            await ctx.send(f"✅ Résumé envoyé à {to_addr}.")
+        except Exception as e:
+            await ctx.send(f"❌ Échec de l’envoi : {e!s}")
+        finally:
+            save_messages_to_file(self.bot.messages_by_channel)
 
 # ============================================================
 # 2) Cog : MessagesCog
@@ -194,19 +217,6 @@ class MessagesCog(commands.Cog):
 
     @commands.command(name="fetch_72h", help="Affiche les messages depuis 72h dans tous les salons.")
     async def fetch_72h_cmd(self, ctx):
-        cutoff_results  = {"important": {}, "general": {}}
-        excluded = self.bot.excluded_channels
-        imp_ch   = self.bot.important_channels
-
-        for channel in ctx.guild.text_channels:
-            if channel.name in excluded:
-                continue
-            category = "important" if channel.name in imp_ch else "general"
-            collected = []
-            async for msg in channel.history(limit=None, after=datetime.utcnow().replace(tzinfo=timezone.utc) - (timezone.utc.utcoffset(None) or datetime.utcnow() - datetime.utcnow())):
-                # fallback, mais on utilise de toute façon la commande dédiée ci-dessous
-                break
-        # on garde la commande initiale (simplifiée) :
         recent  = get_messages_last_72h(self.bot.messages_by_channel)
         summary = format_messages_for_email(recent)
         if not summary.strip():
@@ -249,8 +259,6 @@ class MessagesCog(commands.Cog):
 # 3) Cog : CanauxCog (stockage via #bot-storage)
 # ============================================================
 class CanauxCog(commands.Cog):
-    """Commandes pour gérer la liste des canaux importants/exclus (stockés dans #bot-storage)."""
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._loaded = False
@@ -263,7 +271,6 @@ class CanauxCog(commands.Cog):
             await ensure_storage_loaded(self.bot)
             self._loaded = True
         except Exception as e:
-            # On ne bloque pas le bot si le chargement échoue ; les commandes pourront le relancer.
             print("[CanauxCog] ensure_storage_loaded a échoué :", e)
 
     @commands.command(name="affiche", help="Affiche les listes des canaux importants et exclus (ex: !affiche important).")
